@@ -2,8 +2,16 @@
 	"name": "@omnidev-ai/capability-ralph",
 	"version": "1.0.0",
 	"type": "module",
-	"main": "index.ts",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"scripts": {
+		"build": "esbuild index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+		"clean": "rm -rf dist"
+	},
 	"dependencies": {
 		"@omnidev-ai/core": "latest"
+	},
+	"devDependencies": {
+		"esbuild": "^0.20.0"
 	}
 }

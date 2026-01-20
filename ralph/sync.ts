@@ -5,6 +5,7 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const RALPH_DIR = ".omni/state/ralph";
@@ -44,7 +45,7 @@ export async function sync(): Promise<void> {
 
 	// Create default config if not exists
 	if (!existsSync(CONFIG_PATH)) {
-		await Bun.write(CONFIG_PATH, DEFAULT_CONFIG);
+		await writeFile(CONFIG_PATH, DEFAULT_CONFIG);
 		console.log(`Ralph: Created default config at ${CONFIG_PATH}`);
 	}
 

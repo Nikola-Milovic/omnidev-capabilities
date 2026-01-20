@@ -5,8 +5,9 @@
  */
 
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { spawn } from "bun";
+import { spawn } from "node:child_process";
 import { generatePrompt } from "./prompt.ts";
 import {
 	archivePRD,
@@ -35,7 +36,7 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 		throw new Error("Ralph config not found. Run 'omnidev sync' first.");
 	}
 
-	const content = await Bun.file(CONFIG_PATH).text();
+	const content = await readFile(CONFIG_PATH, "utf-8");
 
 	// Parse TOML manually (simple parser for our needs)
 	const lines = content.split("\n");
@@ -124,22 +125,36 @@ export async function runAgent(
 	prompt: string,
 	agentConfig: AgentConfig,
 ): Promise<{ output: string; exitCode: number }> {
-	const proc = spawn({
-		cmd: [agentConfig.command, ...agentConfig.args],
-		stdin: "pipe",
-		stdout: "pipe",
-		stderr: "pipe",
+	return new Promise((resolve, reject) => {
+		const proc = spawn(agentConfig.command, agentConfig.args, {
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+
+		let stdout = "";
+		let stderr = "";
+
+		proc.stdout?.on("data", (data) => {
+			stdout += data.toString();
+		});
+
+		proc.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on("error", (error) => {
+			reject(error);
+		});
+
+		proc.on("close", (code) => {
+			resolve({ output: stdout + stderr, exitCode: code ?? 1 });
+		});
+
+		// Write prompt to stdin
+		if (proc.stdin) {
+			proc.stdin.write(prompt);
+			proc.stdin.end();
+		}
 	});
-
-	// Write prompt to stdin
-	proc.stdin.write(prompt);
-	proc.stdin.end();
-
-	// Collect output
-	const output = await new Response(proc.stdout).text();
-	const exitCode = await proc.exited;
-
-	return { output, exitCode };
 }
 
 /**

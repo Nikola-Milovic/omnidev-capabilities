@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildCommand, buildRouteMap, debug } from "@omnidev-ai/core";
 import { buildDependencyGraph, canStartPRD } from "./state.js";
@@ -62,7 +63,7 @@ export async function runList(): Promise<void> {
 		if (!existsSync(prdPath)) continue;
 
 		try {
-			const prd: PRD = await Bun.file(prdPath).json();
+			const prd: PRD = JSON.parse(await readFile(prdPath, "utf-8"));
 			const depInfo = depGraph.find((d) => d.name === prdName);
 			const total = prd.stories.length;
 			const completed = prd.stories.filter((s) => s.status === "completed").length;
@@ -120,7 +121,7 @@ export async function runStatus(_flags: Record<string, never>, prdName?: string)
 		return;
 	}
 
-	const prd: PRD = await Bun.file(prdPath).json();
+	const prd: PRD = JSON.parse(await readFile(prdPath, "utf-8"));
 	const { canStart, unmetDependencies } = await canStartPRD(prdName);
 
 	console.log(`\n=== ${prd.name} ===`);
@@ -257,7 +258,7 @@ export async function runProgress(flags: { tail?: number }, prdName?: string): P
 		return;
 	}
 
-	const content = await Bun.file(progressPath).text();
+	const content = await readFile(progressPath, "utf-8");
 
 	if (flags.tail) {
 		const lines = content.split("\n");

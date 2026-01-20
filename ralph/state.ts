@@ -5,6 +5,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LastRun, PRD, Story, StoryStatus } from "./types.js";
 
@@ -89,7 +90,7 @@ export async function getPRD(name: string): Promise<PRD> {
 		}
 	}
 
-	const content = await Bun.file(prdPath).text();
+	const content = await readFile(prdPath, "utf-8");
 	const prd = JSON.parse(content) as PRD;
 
 	// Validate PRD structure
@@ -113,7 +114,7 @@ export async function updatePRD(name: string, updates: Partial<PRD>): Promise<PR
 	};
 
 	const prdPath = getPRDFilePath(name, false);
-	await Bun.write(prdPath, JSON.stringify(updatedPRD, null, 2));
+	await writeFile(prdPath, JSON.stringify(updatedPRD, null, 2));
 
 	return updatedPRD;
 }
@@ -198,11 +199,11 @@ export async function appendProgress(prdName: string, content: string): Promise<
 
 	let existingContent = "";
 	if (existsSync(progressPath)) {
-		existingContent = await Bun.file(progressPath).text();
+		existingContent = await readFile(progressPath, "utf-8");
 	}
 
 	const updatedContent = `${existingContent}\n${content}\n`;
-	await Bun.write(progressPath, updatedContent);
+	await writeFile(progressPath, updatedContent);
 }
 
 /**
@@ -215,7 +216,7 @@ export async function getProgress(prdName: string): Promise<string> {
 		return "";
 	}
 
-	return await Bun.file(progressPath).text();
+	return await readFile(progressPath, "utf-8");
 }
 
 /**
@@ -228,7 +229,7 @@ export async function getSpec(prdName: string): Promise<string> {
 		throw new Error(`Spec file not found for PRD: ${prdName}`);
 	}
 
-	return await Bun.file(specPath).text();
+	return await readFile(specPath, "utf-8");
 }
 
 /**
