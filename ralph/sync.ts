@@ -36,8 +36,6 @@ args = ["--dangerously-allow-all"]
  * Creates directory structure, default config, and updates .gitignore.
  */
 export async function sync(): Promise<void> {
-	console.log("Ralph: Setting up directory structure...");
-
 	// Create directory structure
 	mkdirSync(RALPH_DIR, { recursive: true });
 	mkdirSync(PRDS_DIR, { recursive: true });
@@ -46,8 +44,5 @@ export async function sync(): Promise<void> {
 	// Create default config if not exists
 	if (!existsSync(CONFIG_PATH)) {
 		await writeFile(CONFIG_PATH, DEFAULT_CONFIG);
-		console.log(`Ralph: Created default config at ${CONFIG_PATH}`);
 	}
-
-	console.log("Ralph: Sync complete");
 }

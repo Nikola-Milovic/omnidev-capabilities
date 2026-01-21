@@ -14,10 +14,10 @@ const TASKS_DIR = ".omni/state/tasks";
  * Creates tasks directory.
  */
 export async function sync(): Promise<void> {
-	console.log("Tasks: Setting up directory structure...");
+	// console.log("Tasks: Setting up directory structure...");
 
 	const tasksPath = join(process.cwd(), TASKS_DIR);
 	mkdirSync(tasksPath, { recursive: true });
 
-	console.log("Tasks: Sync complete");
+	// console.log("Tasks: Sync complete");
 }
