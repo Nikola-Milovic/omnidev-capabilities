@@ -5,7 +5,7 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"scripts": {
-		"build": "esbuild index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@stricli/core --external:@omnidev-ai/core",
+		"build": "esbuild index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@omnidev-ai/core",
 		"clean": "rm -rf dist"
 	},
 	"devDependencies": {
@@ -13,7 +13,6 @@
 		"esbuild": "^0.20.0"
 	},
 	"peerDependencies": {
-		"@omnidev-ai/core": "*",
-		"@stricli/core": "*"
+		"@omnidev-ai/core": "*"
 	}
 }
