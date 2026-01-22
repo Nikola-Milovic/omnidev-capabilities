@@ -8,10 +8,12 @@
 		"build": "esbuild index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@stricli/core --external:@omnidev-ai/core",
 		"clean": "rm -rf dist"
 	},
-	"dependencies": {
-		"@omnidev-ai/core": "latest"
-	},
 	"devDependencies": {
+		"@omnidev-ai/core": "latest",
 		"esbuild": "^0.20.0"
+	},
+	"peerDependencies": {
+		"@omnidev-ai/core": "*",
+		"@stricli/core": "*"
 	}
 }
