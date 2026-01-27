@@ -18,6 +18,7 @@ import {
 	markPRDCompleted,
 	markPRDStarted,
 	movePRD,
+	savePRD,
 	updateLastRun,
 	updateMetrics,
 	updateStoryStatus,
@@ -162,6 +163,58 @@ export async function runAgent(
 }
 
 /**
+ * Parse story status updates from agent output.
+ * Looks for patterns like:
+ * - "Story US-001 completed"
+ * - "Marked US-001 as completed"
+ * - JSON blocks with status updates
+ */
+function parseStatusFromOutput(output: string, storyId: string): "completed" | "blocked" | null {
+	// Look for explicit completion messages
+	const completionPatterns = [
+		new RegExp(`${storyId}\\s+completed`, "i"),
+		new RegExp(`marked\\s+${storyId}\\s+as\\s+completed`, "i"),
+		new RegExp(`${storyId}.*status.*completed`, "i"),
+		/All checks pass/i,
+		/Committed changes/i,
+	];
+
+	let completionHints = 0;
+	for (const pattern of completionPatterns) {
+		if (pattern.test(output)) {
+			completionHints++;
+		}
+	}
+
+	// Look for blocking patterns
+	const blockPatterns = [
+		new RegExp(`${storyId}.*blocked`, "i"),
+		/cannot\s+(complete|proceed)/i,
+		/unclear requirements/i,
+		/missing.*dependencies/i,
+	];
+
+	for (const pattern of blockPatterns) {
+		if (pattern.test(output)) {
+			return "blocked";
+		}
+	}
+
+	// If we have multiple completion hints, consider it completed
+	if (completionHints >= 2) {
+		return "completed";
+	}
+
+	// Look for JSON status updates in output
+	const jsonMatch = output.match(/\{[^}]*"status"\s*:\s*"(completed|blocked)"[^}]*\}/i);
+	if (jsonMatch?.[1]) {
+		return jsonMatch[1] as "completed" | "blocked";
+	}
+
+	return null;
+}
+
+/**
  * Handle Ctrl+C - save state and exit gracefully
  */
 async function handleShutdown(): Promise<void> {
@@ -281,10 +334,39 @@ export async function runOrchestration(prdName: string): Promise<void> {
 		// Update current story for Ctrl+C handler
 		currentStory = story;
 
-		// Mark story as in_progress
+		// Check if story has been stuck for too many iterations
+		const iterationCount = (story.iterationCount ?? 0) + 1;
+		if (iterationCount > 3 && story.status === "in_progress") {
+			console.log(
+				`⚠️  Story ${story.id} has been in_progress for ${iterationCount} iterations without completing.`,
+			);
+			console.log("Auto-blocking story for manual review.");
+			await updateStoryStatus(prdName, story.id, "blocked", [
+				`Story has been attempted ${iterationCount} times without successful completion. Please review the implementation and acceptance criteria.`,
+			]);
+
+			await updateLastRun(prdName, {
+				timestamp: new Date().toISOString(),
+				storyId: story.id,
+				reason: "blocked",
+				summary: `Auto-blocked after ${iterationCount} failed iterations`,
+			});
+
+			return;
+		}
+
+		// Mark story as in_progress and increment iteration count
 		await updateStoryStatus(prdName, story.id, "in_progress");
 
-		console.log(`Working on: ${story.id} - ${story.title}`);
+		// Update iteration count in the story
+		const prdForIterationUpdate = await getPRD(prdName);
+		const storyToUpdate = prdForIterationUpdate.stories.find((s) => s.id === story.id);
+		if (storyToUpdate) {
+			storyToUpdate.iterationCount = iterationCount;
+			await savePRD(prdName, prdForIterationUpdate);
+		}
+
+		console.log(`Working on: ${story.id} - ${story.title} (iteration ${iterationCount})`);
 
 		// Generate prompt
 		const prompt = await generatePrompt(prd, story, prdName);
@@ -357,7 +439,20 @@ export async function runOrchestration(prdName: string): Promise<void> {
 		const updatedStory = updatedPrd.stories.find((s) => s.id === story.id);
 
 		if (updatedStory?.status === "completed") {
-			console.log(`Story ${story.id} completed`);
+			console.log(`✓ Story ${story.id} completed`);
+
+			// Reset iteration count on completion
+			if (updatedStory.iterationCount && updatedStory.iterationCount > 0) {
+				updatedStory.iterationCount = 0;
+				await savePRD(prdName, updatedPrd);
+			}
+
+			await updateLastRun(prdName, {
+				timestamp: new Date().toISOString(),
+				storyId: story.id,
+				reason: "story_completed",
+				summary: `Story ${story.id} completed successfully`,
+			});
 		} else if (updatedStory?.status === "blocked") {
 			console.log(`\n🚫 Story ${story.id} is blocked`);
 			if (updatedStory.questions.length > 0) {
@@ -379,7 +474,30 @@ export async function runOrchestration(prdName: string): Promise<void> {
 
 			return;
 		} else {
-			console.log(`Story ${story.id} still in progress`);
+			// Story is still in_progress - try to infer status from agent output
+			console.log(`⚠️  Story ${story.id} still in_progress (status not updated in PRD file)`);
+
+			const inferredStatus = parseStatusFromOutput(output, story.id);
+
+			if (inferredStatus === "completed") {
+				console.log(`Inferred from output: story completed. Updating PRD...`);
+				await updateStoryStatus(prdName, story.id, "completed");
+				console.log(`✓ Story ${story.id} marked as completed`);
+			} else if (inferredStatus === "blocked") {
+				console.log(`Inferred from output: story blocked. Updating PRD...`);
+				await updateStoryStatus(prdName, story.id, "blocked", [
+					"Agent indicated this story is blocked. Please review the output above for details.",
+				]);
+				console.log(`🚫 Story ${story.id} marked as blocked`);
+				return;
+			} else {
+				console.log(
+					"Could not infer status from output. Story remains in_progress for next iteration.",
+				);
+				console.log(
+					"Hint: Agent should explicitly update the prd.json file or indicate completion.",
+				);
+			}
 		}
 	}
 

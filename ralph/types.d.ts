@@ -32,6 +32,8 @@ export interface Story {
 	questions: string[];
 	/** User's answers to questions (parallel array to questions) */
 	answers?: string[];
+	/** Number of iterations attempted for this story (used to detect stuck stories) */
+	iterationCount?: number;
 }
 
 /**

@@ -35,6 +35,10 @@ function extractPatterns(progressContent: string): string[] {
  * Generates a prompt for the agent based on PRD and current story.
  */
 export async function generatePrompt(prd: PRD, story: Story, prdName: string): Promise<string> {
+	// Find PRD location
+	const { findPRDLocation } = await import("./state.js");
+	const prdStatus = findPRDLocation(prdName) ?? "pending";
+
 	// Load progress and spec
 	const progressContent = await getProgress(prdName);
 	let specContent = "";
@@ -97,13 +101,13 @@ ${criteriaLines}${questionsAnswersText}
 
 \`\`\`bash
 # Read the PRD to understand the feature
-cat .omni/state/ralph/prds/${prdName}/prd.json
+cat .omni/state/ralph/prds/${prdStatus}/${prdName}/prd.json
 
 # Read the spec for detailed requirements
-cat .omni/state/ralph/prds/${prdName}/spec.md
+cat .omni/state/ralph/prds/${prdStatus}/${prdName}/spec.md
 
 # Read progress log to understand patterns and recent work
-cat .omni/state/ralph/prds/${prdName}/progress.txt
+cat .omni/state/ralph/prds/${prdStatus}/${prdName}/progress.txt
 \`\`\`
 
 **Important:**
@@ -149,16 +153,30 @@ git commit -m "feat: [${story.id}] - ${story.title}"
 
 ### 6. Update PRD
 
-Mark the story as completed in prd.json:
+**CRITICAL:** You MUST update the PRD file to mark the story as completed.
 
+Read the current PRD, update the story status, and save it back:
+
+\`\`\`bash
+# Read current PRD
+PRD_FILE=".omni/state/ralph/prds/${prdStatus}/${prdName}/prd.json"
+
+# The PRD is a JSON file with a "stories" array
+# Find the story with id "${story.id}" and change its "status" to "completed"
+
+# Use a tool like Edit to update the status field for story "${story.id}" from "in_progress" to "completed"
+\`\`\`
+
+The story object should look like:
 \`\`\`json
 {
   "id": "${story.id}",
-  "status": "completed"
+  "status": "completed",
+  "title": "${story.title}",
+  "acceptanceCriteria": [...],
+  "priority": ${story.priority}
 }
 \`\`\`
-
-Save the updated PRD.
 
 ### 7. Append Progress
 
