@@ -206,9 +206,18 @@ export interface RunAgentOptions {
 }
 
 /**
- * Parse and display a stream-json line from Claude Code
+ * Context for accumulating stream content
  */
-function handleStreamLine(line: string): void {
+interface StreamContext {
+	/** Accumulated plain text from assistant messages (for parsing) */
+	plainText: string;
+}
+
+/**
+ * Parse and display a stream-json line from Claude Code
+ * Returns extracted text content for accumulation
+ */
+function handleStreamLine(line: string, ctx: StreamContext): void {
 	try {
 		const event = JSON.parse(line);
 
@@ -220,6 +229,7 @@ function handleStreamLine(line: string): void {
 					for (const block of content) {
 						if (block.type === "text" && block.text) {
 							process.stdout.write(block.text);
+							ctx.plainText += block.text;
 						} else if (block.type === "tool_use") {
 							console.log(`\n[Tool: ${block.name}]`);
 						}
@@ -228,16 +238,7 @@ function handleStreamLine(line: string): void {
 				break;
 			}
 			case "user": {
-				// Tool results - show tool name
-				const content = event.message?.content;
-				if (Array.isArray(content)) {
-					for (const block of content) {
-						if (block.type === "tool_result") {
-							// Optionally show truncated tool results
-							// console.log(`[Tool result received]`);
-						}
-					}
-				}
+				// Tool results - don't log these (too verbose)
 				break;
 			}
 			case "result": {
@@ -250,6 +251,13 @@ function handleStreamLine(line: string): void {
 					if (event.num_turns) {
 						console.log(`Turns: ${event.num_turns}`);
 					}
+					// The result field contains the final text - use it if we haven't accumulated enough
+					if (event.result && typeof event.result === "string") {
+						// Only use result if plainText is empty (edge case)
+						if (!ctx.plainText.trim()) {
+							ctx.plainText = event.result;
+						}
+					}
 				}
 				break;
 			}
@@ -259,6 +267,7 @@ function handleStreamLine(line: string): void {
 		// Not JSON or parse error - print as-is for non-Claude agents
 		if (line.trim()) {
 			console.log(line);
+			ctx.plainText += `${line}\n`;
 		}
 	}
 }
@@ -281,6 +290,7 @@ export async function runAgent(
 		let stdout = "";
 		let stderr = "";
 		let lineBuffer = "";
+		const streamCtx: StreamContext = { plainText: "" };
 
 		proc.stdout?.on("data", (data) => {
 			const chunk = data.toString();
@@ -295,7 +305,7 @@ export async function runAgent(
 
 				for (const line of lines) {
 					if (line.trim()) {
-						handleStreamLine(line);
+						handleStreamLine(line, streamCtx);
 					}
 				}
 			}
@@ -318,9 +328,13 @@ export async function runAgent(
 		proc.on("close", (code) => {
 			// Process any remaining buffered content
 			if (stream && lineBuffer.trim()) {
-				handleStreamLine(lineBuffer);
+				handleStreamLine(lineBuffer, streamCtx);
 			}
-			resolve({ output: stdout + stderr, exitCode: code ?? 1 });
+
+			// When streaming, return the accumulated plain text for parsing
+			// Otherwise return raw stdout/stderr
+			const output = stream && streamCtx.plainText ? streamCtx.plainText : stdout + stderr;
+			resolve({ output, exitCode: code ?? 1 });
 		});
 
 		// Write prompt to stdin
