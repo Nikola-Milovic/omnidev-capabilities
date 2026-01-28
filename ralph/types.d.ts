@@ -108,8 +108,10 @@ export interface TestingConfig {
 	test_iterations?: number;
 	/** Enable web testing with Playwriter */
 	web_testing_enabled?: boolean;
-	/** Base URL for web testing (e.g., "http://localhost:3000") */
-	web_testing_base_url?: string;
+	/** Free-form instructions for testing (URLs, credentials, context, etc.) */
+	instructions?: string;
+	/** Health check timeout in seconds (default: 120) */
+	health_check_timeout?: number;
 }
 
 /**

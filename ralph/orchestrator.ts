@@ -108,8 +108,10 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 					config.testing.test_iterations = Number.parseInt(value, 10);
 				} else if (key === "web_testing_enabled") {
 					config.testing.web_testing_enabled = value.replace(/["']/g, "") === "true";
-				} else if (key === "web_testing_base_url") {
-					config.testing.web_testing_base_url = value.replace(/["']/g, "");
+				} else if (key === "instructions") {
+					config.testing.instructions = value.replace(/["']/g, "");
+				} else if (key === "health_check_timeout") {
+					config.testing.health_check_timeout = Number.parseInt(value, 10);
 				}
 			} else if (currentSection === "agents" && currentAgent) {
 				const agent = config.agents?.[currentAgent];

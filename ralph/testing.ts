@@ -4,8 +4,10 @@
  * Handles test execution for PRDs with Playwriter integration and QA feedback loop.
  */
 
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { loadRalphConfig, runAgent } from "./orchestrator.ts";
 import {
 	addFixStory,
@@ -21,10 +23,96 @@ import {
 import type { RalphConfig, TestReport, TestResult } from "./types.d.ts";
 import { getVerification, hasVerification } from "./verification.ts";
 
+const RALPH_DIR = ".omni/state/ralph";
+const SCRIPTS_DIR = join(RALPH_DIR, "scripts");
+
+/**
+ * Run a script from the scripts directory
+ * @param scriptName - Name of the script to run
+ * @param prdName - Optional PRD name passed as first argument to script
+ */
+async function runScript(
+	scriptName: string,
+	prdName?: string,
+): Promise<{ success: boolean; output: string }> {
+	const scriptPath = join(process.cwd(), SCRIPTS_DIR, scriptName);
+
+	if (!existsSync(scriptPath)) {
+		return { success: true, output: `Script ${scriptName} not found, skipping` };
+	}
+
+	return new Promise((resolve) => {
+		const args = prdName ? [scriptPath, prdName] : [scriptPath];
+		const proc = spawn("bash", args, {
+			cwd: process.cwd(),
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+
+		let stdout = "";
+		let stderr = "";
+
+		proc.stdout?.on("data", (data) => {
+			stdout += data.toString();
+		});
+
+		proc.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on("close", (code) => {
+			resolve({
+				success: code === 0,
+				output: stdout + stderr,
+			});
+		});
+
+		proc.on("error", (error) => {
+			resolve({
+				success: false,
+				output: error.message,
+			});
+		});
+	});
+}
+
+/**
+ * Run health check with polling until ready or timeout
+ */
+async function waitForHealthCheck(timeoutSeconds: number): Promise<boolean> {
+	const scriptPath = join(process.cwd(), SCRIPTS_DIR, "health-check.sh");
+
+	if (!existsSync(scriptPath)) {
+		console.log("No health-check.sh script found, skipping health check");
+		return true;
+	}
+
+	const startTime = Date.now();
+	const timeoutMs = timeoutSeconds * 1000;
+	const pollIntervalMs = 2000;
+
+	console.log(`Waiting for health check (timeout: ${timeoutSeconds}s)...`);
+
+	while (Date.now() - startTime < timeoutMs) {
+		const { success } = await runScript("health-check.sh");
+		if (success) {
+			console.log("Health check passed!");
+			return true;
+		}
+
+		const elapsed = Math.round((Date.now() - startTime) / 1000);
+		process.stdout.write(`\rHealth check pending... ${elapsed}s / ${timeoutSeconds}s`);
+
+		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+	}
+
+	console.log("\nHealth check timed out!");
+	return false;
+}
+
 /**
  * Playwriter instructions for web testing
  */
-function getPlaywriterInstructions(baseUrl: string): string {
+function getPlaywriterInstructions(): string {
 	return `
 ## Web Testing with Playwriter MCP
 
@@ -41,8 +129,8 @@ playwriter session new
 # IMPORTANT: Create your own page to avoid interference from other agents
 playwriter -s 1 -e "state.myPage = await context.newPage()"
 
-# Navigate to the app
-playwriter -s 1 -e "await state.myPage.goto('${baseUrl}')"
+# Navigate to the app (use URL from testing instructions)
+playwriter -s 1 -e "await state.myPage.goto('http://localhost:3000')"
 \`\`\`
 
 ### Checking Page State
@@ -153,8 +241,10 @@ export async function generateTestPrompt(prdName: string, config: RalphConfig): 
 
 	// Web testing instructions
 	const webTestingEnabled = config.testing?.web_testing_enabled ?? false;
-	const baseUrl = config.testing?.web_testing_base_url || "http://localhost:3000";
-	const playwriterSection = webTestingEnabled ? getPlaywriterInstructions(baseUrl) : "";
+	const playwriterSection = webTestingEnabled ? getPlaywriterInstructions() : "";
+
+	// Testing instructions (URLs, credentials, context)
+	const testingInstructions = config.testing?.instructions || "";
 
 	// Format PRD JSON (truncated for prompt size)
 	const prdJson = JSON.stringify(prd, null, 2);
@@ -164,7 +254,17 @@ export async function generateTestPrompt(prdName: string, config: RalphConfig): 
 
 	return `# Testing Task: ${prd.name}
 
-You are a QA testing agent. Your job is to verify that the feature implementation is correct and complete.
+You are a senior QA engineer. Your job is not just to verify the feature works - it's to **try to break it**.
+
+Think like an adversary. Find edge cases, test boundaries, try unexpected inputs, and verify error handling. A feature that "works" but crashes on edge cases is not ready for production.
+
+## Your QA Mindset
+
+1. **Don't just test the happy path** - Test what happens when things go wrong
+2. **Try to break it** - Invalid inputs, empty values, special characters, huge data
+3. **Check error handling** - Are errors graceful? Do they expose sensitive info?
+4. **Verify edge cases** - Boundaries, limits, concurrent access, race conditions
+5. **Think like a malicious user** - What if someone intentionally misuses this?
 
 ## CRITICAL: Test Result Signals
 
@@ -194,6 +294,14 @@ These signals determine what happens next:
 
 Run these checks FIRST before any other testing.
 
+${
+	testingInstructions
+		? `## Testing Instructions
+
+${testingInstructions}
+`
+		: ""
+}
 ## Test Results Directory
 
 Save all evidence to: \`${testResultsDir}/\`
@@ -213,6 +321,54 @@ curl -s http://localhost:3000/api/endpoint | tee ${testResultsDir}/api-responses
 # POST request
 curl -s -X POST -H "Content-Type: application/json" -d '{"key":"value"}' http://localhost:3000/api/endpoint | tee ${testResultsDir}/api-responses/endpoint-post.json
 \`\`\`
+
+## QA Testing Patterns - TRY TO BREAK IT
+
+### Input Validation (try these for ALL user inputs)
+- **Empty values**: \`""\`, \`null\`, \`undefined\`, whitespace only \`"   "\`
+- **Boundary values**: 0, -1, MAX_INT, very long strings (10000+ chars)
+- **Special characters**: \`<script>alert('xss')</script>\`, \`'; DROP TABLE users;--\`
+- **Unicode/emoji**: \`日本語\`, \`🎉\`, \`\u0000\` (null byte)
+- **Wrong types**: string where number expected, array where object expected
+
+### API Edge Cases
+- **Missing required fields**: Omit each required field one at a time
+- **Extra fields**: Send unexpected fields - are they ignored or cause errors?
+- **Wrong HTTP methods**: GET when POST expected, etc.
+- **Invalid JSON**: Malformed JSON body
+- **Large payloads**: Very large request bodies
+- **Rate limiting**: Rapid repeated requests
+- **Auth edge cases**: Expired tokens, invalid tokens, missing auth
+
+### UI/Form Testing
+- **Double submission**: Click submit twice rapidly
+- **Navigation during submit**: Navigate away while form is submitting
+- **Back button**: Submit, go back, submit again - duplicate data?
+- **Refresh**: Refresh page during/after operations
+- **Empty states**: What shows when there's no data?
+- **Loading states**: Is there feedback during async operations?
+- **Error display**: Are error messages helpful and non-technical?
+
+### State & Data
+- **Concurrent access**: Same resource modified by two users
+- **Stale data**: What if data changed since page load?
+- **Cache issues**: Does old data persist incorrectly?
+- **Pagination boundaries**: First page, last page, page beyond data
+- **Sort edge cases**: Sort with ties, sort empty list
+- **Filter edge cases**: Filter that matches nothing, filter with special chars
+
+### Error Handling Verification
+- **Network failure**: What happens if API call fails?
+- **Timeout**: What happens on slow response?
+- **500 errors**: Does the app handle server errors gracefully?
+- **404 errors**: Missing resources handled properly?
+- **Validation errors**: Are they specific and actionable?
+
+### Security Considerations
+- **Auth required**: Can unauthenticated users access protected resources?
+- **Authorization**: Can user A access user B's data?
+- **Sensitive data exposure**: Are passwords, tokens, PII exposed in responses/logs?
+- **Error messages**: Do errors reveal system internals?
 
 ## PRD (Product Requirements Document)
 
@@ -250,14 +406,17 @@ ${progressContent.slice(0, 5000)}${progressContent.length > 5000 ? "\n...(trunca
 
    ## [Testing Session] ${new Date().toISOString().split("T")[0]}
 
-   **Checklist Progress:**
-   (update as you go through items)
+   **Quality Checks:**
+   (lint, typecheck, tests results)
+
+   **Verification Checklist:**
+   (update as you test each item)
+
+   **Edge Case Testing:**
+   (document what you tried to break and results)
 
    **Issues Found:**
    (document any failures here)
-
-   **API Tests:**
-   (record API test results)
 
    ---
    \`\`\`
@@ -267,29 +426,38 @@ ${progressContent.slice(0, 5000)}${progressContent.length > 5000 ? "\n...(trunca
    - Update progress.txt with results
    - If any fail, document and report PRD_FAILED
 
-3. **Go through verification checklist**
+3. **Go through verification checklist (happy path)**
    - Test each item systematically
    - **Update verification.md** - change \`[ ]\` to \`[x]\` for passing items
    - Take screenshots of failures
    - Save API responses
-   - Update progress.txt as you go
 
-4. **For web testing (if applicable)**
+4. **TRY TO BREAK IT (edge cases)**
+   - For each feature, apply the QA Testing Patterns above
+   - Try invalid inputs, empty values, special characters
+   - Test error handling and edge cases
+   - Document everything you try in progress.txt
+   - Screenshot any crashes or unexpected behavior
+
+5. **For web testing (if applicable)**
    - Create Playwriter session
    - Use state.myPage for isolation
-   - Screenshot any visual issues
+   - Test the happy path first
+   - Then try to break the UI: double-clicks, rapid navigation, back button, refresh
 
-5. **Update verification.md with final results**
+6. **Update verification.md with final results**
    - Mark all tested items: \`[x]\` for pass, \`[ ]\` for fail
    - Add notes next to failed items explaining why
+   - Add any new edge case issues you discovered
 
-6. **Document findings in progress.txt**
+7. **Document findings in progress.txt**
    - Complete the testing session entry
-   - List all issues found with details
+   - List ALL issues found (including edge cases)
+   - Be specific: what input caused what failure
 
-7. **Output final signal**
-   - PRD_VERIFIED if everything passes
-   - PRD_FAILED with issues list if anything fails
+8. **Output final signal**
+   - PRD_VERIFIED only if BOTH happy path AND edge cases pass
+   - PRD_FAILED with issues list if anything is broken
 
 ## Output Format
 
@@ -541,15 +709,49 @@ export async function runTesting(
 	console.log(`\nStarting testing for PRD: ${prdName}`);
 	console.log(`Using agent: ${agentName}`);
 	if (config.testing?.web_testing_enabled) {
-		console.log(`Web testing: enabled (${config.testing.web_testing_base_url})`);
+		console.log("Web testing: enabled");
 	}
 	console.log("");
+
+	// Run teardown first to ensure clean state
+	console.log("Running teardown script (ensuring clean state)...");
+	const preTeardownResult = await runScript("teardown.sh", prdName);
+	if (preTeardownResult.output && !preTeardownResult.output.includes("not found")) {
+		console.log(preTeardownResult.output);
+	}
+
+	// Run setup script
+	console.log("Running setup script...");
+	const setupResult = await runScript("setup.sh", prdName);
+	if (!setupResult.success) {
+		console.log(`Setup script failed: ${setupResult.output}`);
+		// Continue anyway - setup might be optional
+	} else {
+		console.log(setupResult.output);
+	}
+
+	// Run start script
+	console.log("Running start script...");
+	const startResult = await runScript("start.sh", prdName);
+	if (!startResult.success) {
+		console.log(`Start script failed or not configured: ${startResult.output}`);
+		// Continue anyway - might not need server start
+	} else {
+		console.log(startResult.output);
+	}
+
+	// Wait for health check
+	const healthCheckTimeout = config.testing?.health_check_timeout ?? 120;
+	const healthCheckPassed = await waitForHealthCheck(healthCheckTimeout);
+	if (!healthCheckPassed) {
+		console.log("\n⚠️  Health check failed - continuing anyway, tests may fail");
+	}
 
 	// Generate test prompt
 	const prompt = await generateTestPrompt(prdName, config);
 
 	// Run agent
-	console.log("Spawning test agent...\n");
+	console.log("\nSpawning test agent...\n");
 	const { output, exitCode } = await runAgent(prompt, agentConfig);
 
 	// Log output
@@ -568,6 +770,15 @@ export async function runTesting(
 	console.log("Saving test report...");
 	const reportPath = await saveTestReport(prdName, report);
 
+	// Helper to run teardown
+	const runTeardown = async () => {
+		console.log("\nRunning teardown script...");
+		const teardownResult = await runScript("teardown.sh", prdName);
+		if (teardownResult.output) {
+			console.log(teardownResult.output);
+		}
+	};
+
 	// Handle result
 	if (testResult === "verified") {
 		console.log("\n✅ PRD_VERIFIED signal detected!");
@@ -579,6 +790,8 @@ export async function runTesting(
 
 		// Move to completed
 		await movePRD(prdName, "completed");
+
+		await runTeardown();
 
 		console.log(`\n🎉 PRD "${prdName}" has been completed!`);
 		console.log(`Findings saved to .omni/state/ralph/findings.md`);
@@ -604,6 +817,8 @@ export async function runTesting(
 		console.log("Moving PRD back to pending...");
 		await movePRD(prdName, "pending");
 
+		await runTeardown();
+
 		console.log(`\n📋 Fix story created: ${fixStoryId}`);
 		console.log(`PRD "${prdName}" moved back to pending.`);
 		console.log(
@@ -615,6 +830,8 @@ export async function runTesting(
 	}
 
 	// No clear signal detected
+	await runTeardown();
+
 	console.log("\n⚠️  No clear test result signal detected.");
 	console.log(
 		"Agent should output <test-result>PRD_VERIFIED</test-result> or <test-result>PRD_FAILED</test-result>",

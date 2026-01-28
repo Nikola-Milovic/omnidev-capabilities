@@ -85,10 +85,16 @@ omnidev ralph test my-feature
 ```
 
 The test agent will:
+- Run teardown first (ensure clean state from previous runs)
+- Run setup scripts (database reset, seeding)
+- Start the dev server
+- Wait for health check
 - Run project quality checks (lint, typecheck, tests)
 - Go through the verification checklist
+- Try to break the app (edge cases, invalid inputs, etc.)
 - Take screenshots of any issues (with Playwriter)
 - Save API responses for debugging
+- Run teardown scripts (cleanup)
 
 ### Test Result Signals
 
@@ -110,6 +116,176 @@ The test agent outputs one of these signals:
 ```
 → Fix story created (FIX-001, FIX-002, etc.), PRD moves back to `pending`
 
+## Configuration
+
+Configuration lives in `.omni/state/ralph/config.toml`:
+
+```toml
+[ralph]
+default_agent = "claude"
+default_iterations = 10
+
+[testing]
+# Quality checks the agent must run
+project_verification_instructions = "pnpm lint, pnpm typecheck, pnpm test must pass"
+test_iterations = 5
+# Enable web testing with Playwriter MCP
+web_testing_enabled = true
+# Health check timeout in seconds
+health_check_timeout = 120
+
+# Free-form instructions - URLs, credentials, context
+instructions = """
+URLs:
+- App: http://localhost:3000
+- Admin: http://localhost:3000/admin
+- API: http://localhost:3000/api
+
+Test Users:
+- Admin: admin@test.com / testpass123
+- User: user@test.com / testpass123
+
+Database is seeded with 10 users, 5 products, sample orders.
+"""
+
+[agents.claude]
+command = "npx"
+args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-skip-permissions", "-p"]
+```
+
+## Testing Scripts
+
+Ralph uses scripts in `.omni/state/ralph/scripts/` for test setup/teardown:
+
+| Script | Description |
+|--------|-------------|
+| `setup.sh` | Runs before testing (database reset, seeding) |
+| `start.sh` | Starts the dev server in background |
+| `health-check.sh` | Polls until ready (exit 0 = ready) |
+| `teardown.sh` | Cleanup after testing (stop server) |
+
+Scripts receive the **PRD name as `$1`** (optional). Use it for namespaced logs and PIDs:
+
+```bash
+PRD_NAME="${1:-default}"  # Use "default" if not provided
+LOG_FILE="/tmp/ralph/logs/${PRD_NAME}.log"
+PID_FILE="/tmp/ralph/${PRD_NAME}.pid"
+```
+
+Template scripts are created on `omnidev sync`. Customize them for your project.
+
+### Example `start.sh`
+
+Start dev servers in background, tracking PIDs for cleanup:
+
+```bash
+#!/usr/bin/env bash
+#
+# Ralph start script - starts dev servers in background
+# Tracks PIDs for cleanup in teardown.sh
+# Receives PRD name as $1 for namespaced logs/PIDs
+
+set -e
+
+PRD_NAME="${1:-default}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+PID_DIR="/tmp/ralph"
+LOG_DIR="/tmp/ralph/logs"
+
+mkdir -p "$PID_DIR" "$LOG_DIR"
+
+cd "$ROOT_DIR"
+
+echo "[ralph:$PRD_NAME] Starting dev servers..."
+
+# Start turbo dev without TUI (--ui stream instead of --ui tui)
+# Run in background with nohup to detach from terminal
+nohup pnpm turbo run --ui stream --concurrency=15 dev > "$LOG_DIR/${PRD_NAME}.log" 2>&1 &
+DEV_PID=$!
+echo $DEV_PID > "$PID_DIR/${PRD_NAME}.pid"
+
+echo "[ralph:$PRD_NAME] Started dev server (PID: $DEV_PID)"
+echo "[ralph:$PRD_NAME] Logs at: $LOG_DIR/${PRD_NAME}.log"
+echo "[ralph:$PRD_NAME] PID stored in: $PID_DIR/${PRD_NAME}.pid"
+
+# Give it a moment to spawn child processes
+sleep 2
+
+echo "[ralph:$PRD_NAME] Dev servers starting in background..."
+```
+
+### Example `health-check.sh`
+
+```bash
+#!/bin/bash
+curl -sf http://localhost:3000/api/health > /dev/null
+```
+
+### Example `teardown.sh`
+
+Clean up processes using saved PIDs, with graceful and force kill fallbacks:
+
+```bash
+#!/usr/bin/env bash
+#
+# Ralph teardown script - cleanup after testing
+# Stops dev servers, optionally destroys docker volumes
+# Receives PRD name as $1 for namespaced cleanup
+
+set -e
+
+PRD_NAME="${1:-default}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+PID_DIR="/tmp/ralph"
+LOG_DIR="/tmp/ralph/logs"
+PID_FILE="$PID_DIR/${PRD_NAME}.pid"
+LOG_FILE="$LOG_DIR/${PRD_NAME}.log"
+
+cd "$ROOT_DIR"
+
+echo "[ralph:$PRD_NAME] Starting teardown..."
+
+# Kill dev server and all child processes
+if [ -f "$PID_FILE" ]; then
+    DEV_PID=$(cat "$PID_FILE")
+    echo "[ralph:$PRD_NAME] Stopping dev server (PID: $DEV_PID)..."
+
+    # Kill the process group to get all child processes
+    pkill -P $DEV_PID 2>/dev/null || true
+    kill $DEV_PID 2>/dev/null || true
+
+    # Wait a moment for graceful shutdown
+    sleep 2
+
+    # Force kill if still running
+    kill -9 $DEV_PID 2>/dev/null || true
+    pkill -9 -P $DEV_PID 2>/dev/null || true
+
+    rm -f "$PID_FILE"
+    echo "[ralph:$PRD_NAME] Stopped dev server"
+fi
+
+# Kill any remaining node processes that might be from our dev servers
+# Be careful here - only kill processes in our project directory
+pkill -f "node.*myproject.*dev" 2>/dev/null || true
+
+# Stop docker services and remove volumes for clean state
+echo "[ralph:$PRD_NAME] Stopping docker services..."
+docker compose down -v --remove-orphans 2>/dev/null || true
+
+# Clean up log file for this PRD
+if [ -f "$LOG_FILE" ]; then
+    echo "[ralph:$PRD_NAME] Cleaning up logs..."
+    rm -f "$LOG_FILE"
+fi
+
+echo "[ralph:$PRD_NAME] Teardown complete!"
+```
+
 ## PRD Structure
 
 Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with these files:
@@ -118,30 +294,9 @@ Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with these files
 |------|-------------|
 | `prd.json` | PRD definition with metadata and stories |
 | `spec.md` | Detailed feature requirements |
-| `progress.txt` | Log of work done across iterations |
-| `verification.md` | Auto-generated test checklist (in testing status) |
-| `test-results/` | Test evidence folder |
-
-### prd.json
-
-```json
-{
-  "name": "feature-name",
-  "description": "Brief description",
-  "stories": [
-    {
-      "id": "US-001",
-      "title": "Story title",
-      "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
-      "status": "pending",
-      "priority": 1,
-      "questions": []
-    }
-  ]
-}
-```
-
-Story statuses: `pending`, `in_progress`, `completed`, `blocked`
+| `progress.txt` | Log of work done (implementation + testing sessions) |
+| `verification.md` | Auto-generated test checklist |
+| `test-results/` | Test evidence (screenshots, API responses) |
 
 ### test-results/
 
@@ -156,35 +311,9 @@ test-results/
     └── endpoint.json
 ```
 
-## Configuration
+## Web Testing with Playwriter
 
-Agent and testing configuration lives in `.omni/state/ralph/config.toml`:
-
-```toml
-[ralph]
-default_agent = "claude"
-default_iterations = 10
-
-[testing]
-# Instructions shown to test agent
-project_verification_instructions = "pnpm lint, pnpm typecheck, pnpm test must pass"
-test_iterations = 5
-# Enable web testing with Playwriter MCP
-web_testing_enabled = true
-web_testing_base_url = "http://localhost:3000"
-
-[agents.claude]
-command = "npx"
-args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-skip-permissions", "-p"]
-
-[agents.codex]
-command = "npx"
-args = ["-y", "@openai/codex", "exec", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "-"]
-```
-
-### Web Testing with Playwriter
-
-When `web_testing_enabled = true`, the test agent receives instructions for using Playwriter MCP:
+When `web_testing_enabled = true`, the test agent uses Playwriter MCP for browser automation:
 
 ```bash
 # Create session and isolated page
@@ -226,6 +355,7 @@ omnidev ralph start my-feature
 
 # 3. Run tests
 omnidev ralph test my-feature
+# Runs: teardown.sh (clean) → setup.sh → start.sh → health-check.sh → agent tests → teardown.sh
 
 # 4a. If PRD_VERIFIED → automatically completed!
 
