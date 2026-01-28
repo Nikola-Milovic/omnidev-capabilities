@@ -358,13 +358,15 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 /**
  * Start Ralph orchestration
  */
-export async function runStart(_flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+export async function runStart(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph start <prd-name>");
+		console.error("Usage: omnidev ralph start <prd-name> [--agent <agent-name>]");
 		console.error("\nAvailable PRDs:");
 		await runList({});
 		process.exit(1);
 	}
+
+	const agentOverride = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
 
 	const status = findPRDLocation(prdName);
 	if (!status) {
@@ -440,7 +442,7 @@ export async function runStart(_flags: Record<string, unknown>, prdName?: unknow
 
 	// Import and run orchestration
 	const { runOrchestration } = await import("./orchestrator.js");
-	await runOrchestration(prdName);
+	await runOrchestration(prdName, agentOverride);
 }
 
 /**
@@ -639,6 +641,13 @@ const statusCommand = command({
 const startCommand = command({
 	brief: "Start Ralph orchestration (Ctrl+C to stop)",
 	parameters: {
+		flags: {
+			agent: {
+				kind: "string",
+				brief: "Agent to use (e.g., claude, codex, amp)",
+				optional: true,
+			},
+		},
 		positional: [{ brief: "PRD name", kind: "string" }],
 	},
 	func: runStart,

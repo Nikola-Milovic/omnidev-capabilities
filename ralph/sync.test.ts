@@ -39,7 +39,6 @@ it("creates default config.toml if not exists", async () => {
 	assert.ok(content.includes("[ralph]"));
 	assert.ok(content.includes('default_agent = "claude"'));
 	assert.ok(content.includes("default_iterations = 10"));
-	assert.ok(content.includes("auto_archive = true"));
 	assert.ok(content.includes("[agents.claude]"));
 	assert.ok(content.includes("[agents.codex]"));
 	assert.ok(content.includes("[agents.amp]"));

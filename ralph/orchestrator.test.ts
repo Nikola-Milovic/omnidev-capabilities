@@ -18,7 +18,6 @@ const PRDS_DIR = join(RALPH_DIR, "prds");
 const MOCK_CONFIG = `[ralph]
 default_agent = "test"
 default_iterations = 5
-auto_archive = false
 
 [agents.test]
 command = "echo"
@@ -76,7 +75,6 @@ it("loads valid config", async () => {
 
 	assert.strictEqual(config.default_agent, "test");
 	assert.strictEqual(config.default_iterations, 5);
-	assert.strictEqual(config.auto_archive, false);
 	assert.deepStrictEqual(config.agents["test"], {
 		command: "echo",
 		args: ["test output"],

@@ -106,8 +106,6 @@ export interface RalphConfig {
 	default_agent: string;
 	/** Default max iterations */
 	default_iterations: number;
-	/** Whether to auto-archive completed PRDs */
-	auto_archive: boolean;
 	/** Available agents */
 	agents: Record<string, AgentConfig>;
 }

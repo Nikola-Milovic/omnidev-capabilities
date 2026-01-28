@@ -16,7 +16,6 @@ const CONFIG_PATH = join(RALPH_DIR, "config.toml");
 const DEFAULT_CONFIG = `[ralph]
 default_agent = "claude"
 default_iterations = 10
-auto_archive = true
 
 [agents.claude]
 command = "npx"

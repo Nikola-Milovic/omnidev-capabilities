@@ -93,8 +93,6 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 					config.default_agent = value.replace(/["']/g, "");
 				} else if (key === "default_iterations") {
 					config.default_iterations = Number.parseInt(value, 10);
-				} else if (key === "auto_archive") {
-					config.auto_archive = value === "true";
 				}
 			} else if (currentSection === "agents" && currentAgent) {
 				const agent = config.agents?.[currentAgent];
@@ -241,10 +239,10 @@ async function handleShutdown(): Promise<void> {
 /**
  * Runs the orchestration loop for a PRD.
  */
-export async function runOrchestration(prdName: string): Promise<void> {
+export async function runOrchestration(prdName: string, agentOverride?: string): Promise<void> {
 	const config = await loadRalphConfig();
 
-	const agentName = config.default_agent;
+	const agentName = agentOverride ?? config.default_agent;
 	const maxIterations = config.default_iterations;
 
 	// Validate agent exists
