@@ -12,18 +12,18 @@ import type { PRD } from "./types.ts";
 
 const TEST_DIR = join(process.cwd(), ".test-ralph-orchestrator");
 const RALPH_DIR = join(TEST_DIR, ".omni/state/ralph");
-const CONFIG_PATH = join(RALPH_DIR, "config.toml");
+const CONFIG_PATH = join(TEST_DIR, "omni.toml");
 const PRDS_DIR = join(RALPH_DIR, "prds");
 
 const MOCK_CONFIG = `[ralph]
 default_agent = "test"
 default_iterations = 5
 
-[agents.test]
+[ralph.agents.test]
 command = "echo"
 args = ["test output"]
 
-[agents.claude]
+[ralph.agents.claude]
 command = "npx"
 args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "-p"]
 `;
@@ -84,7 +84,7 @@ it("loads valid config", async () => {
 it("throws if config doesn't exist", async () => {
 	rmSync(CONFIG_PATH);
 
-	await assert.rejects(loadRalphConfig(), /Ralph config not found/);
+	await assert.rejects(loadRalphConfig(), /omni\.toml not found/);
 });
 
 it("throws if config is invalid", async () => {

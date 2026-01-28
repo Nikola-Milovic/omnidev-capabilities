@@ -14,6 +14,8 @@ omnidev sync
 
 This creates the Ralph directory structure at `.omni/state/ralph/`.
 
+After setup, add the `[ralph]` configuration to your `omni.toml` file (see Configuration section below).
+
 ## Commands
 
 ```bash
@@ -118,19 +120,19 @@ The test agent outputs one of these signals:
 
 ## Configuration
 
-Configuration lives in `.omni/state/ralph/config.toml`:
+Configuration lives in `omni.toml` under the `[ralph]` section:
 
 ```toml
 [ralph]
 default_agent = "claude"
 default_iterations = 10
 
-[testing]
+[ralph.testing]
 # Quality checks the agent must run
-project_verification_instructions = "pnpm lint, pnpm typecheck, pnpm test must pass"
+project_verification_instructions = "Run pnpm lint, pnpm typecheck, and pnpm test."
 test_iterations = 5
 # Enable web testing with Playwriter MCP
-web_testing_enabled = true
+web_testing_enabled = false
 # Health check timeout in seconds
 health_check_timeout = 120
 
@@ -148,21 +150,33 @@ Test Users:
 Database is seeded with 10 users, 5 products, sample orders.
 """
 
-[agents.claude]
+[ralph.scripts]
+setup = "./scripts/ralph/setup.sh"
+start = "./scripts/ralph/start.sh"
+health_check = "./scripts/ralph/health-check.sh"
+teardown = "./scripts/ralph/teardown.sh"
+
+[ralph.agents.claude]
 command = "npx"
 args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-skip-permissions", "-p"]
+
+[ralph.agents.codex]
+command = "npx"
+args = ["-y", "@openai/codex", "exec", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "-"]
 ```
 
 ## Testing Scripts
 
-Ralph uses scripts in `.omni/state/ralph/scripts/` for test setup/teardown:
+Ralph uses lifecycle scripts configured via `[ralph.scripts]`:
 
-| Script | Description |
-|--------|-------------|
-| `setup.sh` | Runs before testing (database reset, seeding) |
-| `start.sh` | Starts the dev server in background |
-| `health-check.sh` | Polls until ready (exit 0 = ready) |
-| `teardown.sh` | Cleanup after testing (stop server) |
+| Config Key | Description |
+|------------|-------------|
+| `setup` | Runs before testing (database reset, seeding) |
+| `start` | Starts the dev server in background |
+| `health_check` | Polls until ready (exit 0 = ready) |
+| `teardown` | Cleanup after testing (stop server) |
+
+Scripts are optional - if not configured, that step is skipped. Place scripts in a version-controlled location (e.g., `scripts/ralph/`).
 
 Scripts receive the **PRD name as `$1`** (optional). Use it for namespaced logs and PIDs:
 
@@ -171,8 +185,6 @@ PRD_NAME="${1:-default}"  # Use "default" if not provided
 LOG_FILE="/tmp/ralph/logs/${PRD_NAME}.log"
 PID_FILE="/tmp/ralph/${PRD_NAME}.pid"
 ```
-
-Template scripts are created on `omnidev sync`. Customize them for your project.
 
 ### Example `start.sh`
 

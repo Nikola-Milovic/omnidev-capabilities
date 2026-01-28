@@ -115,6 +115,20 @@ export interface TestingConfig {
 }
 
 /**
+ * Scripts configuration - paths to lifecycle scripts
+ */
+export interface ScriptsConfig {
+	/** Path to setup script (runs before testing) */
+	setup?: string;
+	/** Path to start script (starts dev server) */
+	start?: string;
+	/** Path to health check script (polls until ready) */
+	health_check?: string;
+	/** Path to teardown script (cleanup after testing) */
+	teardown?: string;
+}
+
+/**
  * Issue found during testing
  */
 export interface TestIssue {
@@ -140,6 +154,8 @@ export interface RalphConfig {
 	agents: Record<string, AgentConfig>;
 	/** Testing configuration */
 	testing?: TestingConfig;
+	/** Scripts configuration - paths to lifecycle scripts */
+	scripts?: ScriptsConfig;
 }
 
 /**

@@ -23,26 +23,29 @@ import {
 import type { RalphConfig, TestReport, TestResult } from "./types.d.ts";
 import { getVerification, hasVerification } from "./verification.ts";
 
-const RALPH_DIR = ".omni/state/ralph";
-const SCRIPTS_DIR = join(RALPH_DIR, "scripts");
-
 /**
- * Run a script from the scripts directory
- * @param scriptName - Name of the script to run
+ * Run a script from a configured path
+ * @param scriptPath - Path to the script (from config), or undefined if not configured
+ * @param scriptName - Friendly name for logging (e.g., "setup", "teardown")
  * @param prdName - Optional PRD name passed as first argument to script
  */
 async function runScript(
+	scriptPath: string | undefined,
 	scriptName: string,
 	prdName?: string,
 ): Promise<{ success: boolean; output: string }> {
-	const scriptPath = join(process.cwd(), SCRIPTS_DIR, scriptName);
+	if (!scriptPath) {
+		return { success: true, output: `${scriptName} script not configured, skipping` };
+	}
 
-	if (!existsSync(scriptPath)) {
-		return { success: true, output: `Script ${scriptName} not found, skipping` };
+	const fullPath = join(process.cwd(), scriptPath);
+
+	if (!existsSync(fullPath)) {
+		return { success: true, output: `${scriptName} script not found at ${scriptPath}, skipping` };
 	}
 
 	return new Promise((resolve) => {
-		const args = prdName ? [scriptPath, prdName] : [scriptPath];
+		const args = prdName ? [fullPath, prdName] : [fullPath];
 		const proc = spawn("bash", args, {
 			cwd: process.cwd(),
 			stdio: ["pipe", "pipe", "pipe"],
@@ -77,12 +80,22 @@ async function runScript(
 
 /**
  * Run health check with polling until ready or timeout
+ * @param healthCheckPath - Path to health check script from config
+ * @param timeoutSeconds - Timeout in seconds
  */
-async function waitForHealthCheck(timeoutSeconds: number): Promise<boolean> {
-	const scriptPath = join(process.cwd(), SCRIPTS_DIR, "health-check.sh");
+async function waitForHealthCheck(
+	healthCheckPath: string | undefined,
+	timeoutSeconds: number,
+): Promise<boolean> {
+	if (!healthCheckPath) {
+		console.log("No health check script configured, skipping health check");
+		return true;
+	}
 
-	if (!existsSync(scriptPath)) {
-		console.log("No health-check.sh script found, skipping health check");
+	const fullPath = join(process.cwd(), healthCheckPath);
+
+	if (!existsSync(fullPath)) {
+		console.log(`Health check script not found at ${healthCheckPath}, skipping health check`);
 		return true;
 	}
 
@@ -93,7 +106,7 @@ async function waitForHealthCheck(timeoutSeconds: number): Promise<boolean> {
 	console.log(`Waiting for health check (timeout: ${timeoutSeconds}s)...`);
 
 	while (Date.now() - startTime < timeoutMs) {
-		const { success } = await runScript("health-check.sh");
+		const { success } = await runScript(healthCheckPath, "health_check");
 		if (success) {
 			console.log("Health check passed!");
 			return true;
@@ -713,16 +726,19 @@ export async function runTesting(
 	}
 	console.log("");
 
+	// Get script paths from config
+	const scripts = config.scripts;
+
 	// Run teardown first to ensure clean state
 	console.log("Running teardown script (ensuring clean state)...");
-	const preTeardownResult = await runScript("teardown.sh", prdName);
-	if (preTeardownResult.output && !preTeardownResult.output.includes("not found")) {
+	const preTeardownResult = await runScript(scripts?.teardown, "teardown", prdName);
+	if (preTeardownResult.output && !preTeardownResult.output.includes("not configured")) {
 		console.log(preTeardownResult.output);
 	}
 
 	// Run setup script
 	console.log("Running setup script...");
-	const setupResult = await runScript("setup.sh", prdName);
+	const setupResult = await runScript(scripts?.setup, "setup", prdName);
 	if (!setupResult.success) {
 		console.log(`Setup script failed: ${setupResult.output}`);
 		// Continue anyway - setup might be optional
@@ -732,7 +748,7 @@ export async function runTesting(
 
 	// Run start script
 	console.log("Running start script...");
-	const startResult = await runScript("start.sh", prdName);
+	const startResult = await runScript(scripts?.start, "start", prdName);
 	if (!startResult.success) {
 		console.log(`Start script failed or not configured: ${startResult.output}`);
 		// Continue anyway - might not need server start
@@ -742,7 +758,7 @@ export async function runTesting(
 
 	// Wait for health check
 	const healthCheckTimeout = config.testing?.health_check_timeout ?? 120;
-	const healthCheckPassed = await waitForHealthCheck(healthCheckTimeout);
+	const healthCheckPassed = await waitForHealthCheck(scripts?.health_check, healthCheckTimeout);
 	if (!healthCheckPassed) {
 		console.log("\n⚠️  Health check failed - continuing anyway, tests may fail");
 	}
@@ -773,8 +789,8 @@ export async function runTesting(
 	// Helper to run teardown
 	const runTeardown = async () => {
 		console.log("\nRunning teardown script...");
-		const teardownResult = await runScript("teardown.sh", prdName);
-		if (teardownResult.output) {
+		const teardownResult = await runScript(scripts?.teardown, "teardown", prdName);
+		if (teardownResult.output && !teardownResult.output.includes("not configured")) {
 			console.log(teardownResult.output);
 		}
 	};

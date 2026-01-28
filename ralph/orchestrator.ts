@@ -6,7 +6,6 @@
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { generatePrompt } from "./prompt.ts";
 import {
@@ -25,8 +24,7 @@ import {
 } from "./state.ts";
 import type { AgentConfig, RalphConfig, Story } from "./types.d.ts";
 
-const RALPH_DIR = ".omni/state/ralph";
-const CONFIG_PATH = join(RALPH_DIR, "config.toml");
+const CONFIG_PATH = "omni.toml";
 
 // Track current state for Ctrl+C handler
 let currentPrdName: string | null = null;
@@ -34,11 +32,11 @@ let currentStory: Story | null = null;
 let isShuttingDown = false;
 
 /**
- * Loads Ralph configuration from .omni/ralph/config.toml
+ * Loads Ralph configuration from omni.toml [ralph] section
  */
 export async function loadRalphConfig(): Promise<RalphConfig> {
 	if (!existsSync(CONFIG_PATH)) {
-		throw new Error("Ralph config not found. Run 'omnidev sync' first.");
+		throw new Error("omni.toml not found. Create it with a [ralph] section.");
 	}
 
 	const content = await readFile(CONFIG_PATH, "utf-8");
@@ -48,15 +46,36 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 	const config: Partial<RalphConfig> = {
 		agents: {},
 		testing: {},
+		scripts: {},
 	};
 
 	let currentSection: string | null = null;
 	let currentAgent: string | null = null;
+	let inMultilineString = false;
+	let multilineKey: string | null = null;
+	let multilineValue = "";
 
 	for (const line of lines) {
 		const trimmed = line.trim();
 
-		// Skip empty lines and comments
+		// Handle multiline strings (triple quotes)
+		if (inMultilineString) {
+			if (trimmed === '"""') {
+				// End of multiline string
+				inMultilineString = false;
+				if (currentSection === "ralph.testing" && multilineKey === "instructions") {
+					if (!config.testing) config.testing = {};
+					config.testing.instructions = multilineValue.trim();
+				}
+				multilineKey = null;
+				multilineValue = "";
+			} else {
+				multilineValue += `${line}\n`;
+			}
+			continue;
+		}
+
+		// Skip empty lines and comments (when not in multiline)
 		if (trimmed === "" || trimmed.startsWith("#")) {
 			continue;
 		}
@@ -69,19 +88,41 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 				if (section === "ralph") {
 					currentSection = "ralph";
 					currentAgent = null;
-				} else if (section === "testing") {
-					currentSection = "testing";
+				} else if (section === "ralph.testing") {
+					currentSection = "ralph.testing";
 					currentAgent = null;
-				} else if (section?.startsWith("agents.")) {
-					currentSection = "agents";
-					currentAgent = section.slice("agents.".length);
+				} else if (section === "ralph.scripts") {
+					currentSection = "ralph.scripts";
+					currentAgent = null;
+				} else if (section?.startsWith("ralph.agents.")) {
+					currentSection = "ralph.agents";
+					currentAgent = section.slice("ralph.agents.".length);
 					if (!config.agents) {
 						config.agents = {};
 					}
 					config.agents[currentAgent] = { command: "", args: [] };
+				} else {
+					// Not a ralph section, ignore
+					currentSection = null;
+					currentAgent = null;
 				}
 			}
 			continue;
+		}
+
+		// Check for multiline string start
+		if (trimmed.includes('= """')) {
+			const keyMatch = trimmed.match(/^(\w+)\s*=\s*"""/);
+			if (keyMatch) {
+				inMultilineString = true;
+				multilineKey = keyMatch[1] ?? null;
+				// Check if there's content after the opening """
+				const afterQuotes = trimmed.slice(trimmed.indexOf('"""') + 3);
+				if (afterQuotes) {
+					multilineValue = `${afterQuotes}\n`;
+				}
+				continue;
+			}
 		}
 
 		// Key-value pairs
@@ -98,7 +139,7 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 				} else if (key === "default_iterations") {
 					config.default_iterations = Number.parseInt(value, 10);
 				}
-			} else if (currentSection === "testing") {
+			} else if (currentSection === "ralph.testing") {
 				if (!config.testing) {
 					config.testing = {};
 				}
@@ -108,12 +149,26 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 					config.testing.test_iterations = Number.parseInt(value, 10);
 				} else if (key === "web_testing_enabled") {
 					config.testing.web_testing_enabled = value.replace(/["']/g, "") === "true";
-				} else if (key === "instructions") {
+				} else if (key === "instructions" && !value.startsWith('"""')) {
 					config.testing.instructions = value.replace(/["']/g, "");
 				} else if (key === "health_check_timeout") {
 					config.testing.health_check_timeout = Number.parseInt(value, 10);
 				}
-			} else if (currentSection === "agents" && currentAgent) {
+			} else if (currentSection === "ralph.scripts") {
+				if (!config.scripts) {
+					config.scripts = {};
+				}
+				const scriptValue = value.replace(/["']/g, "");
+				if (key === "setup") {
+					config.scripts.setup = scriptValue;
+				} else if (key === "start") {
+					config.scripts.start = scriptValue;
+				} else if (key === "health_check") {
+					config.scripts.health_check = scriptValue;
+				} else if (key === "teardown") {
+					config.scripts.teardown = scriptValue;
+				}
+			} else if (currentSection === "ralph.agents" && currentAgent) {
 				const agent = config.agents?.[currentAgent];
 				if (!agent) {
 					continue;
@@ -134,7 +189,9 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 
 	// Validate required fields
 	if (!config.default_agent || !config.default_iterations) {
-		throw new Error("Invalid Ralph config: missing required fields");
+		throw new Error(
+			"Invalid Ralph config in omni.toml: missing required fields (default_agent, default_iterations)",
+		);
 	}
 
 	return config as RalphConfig;
