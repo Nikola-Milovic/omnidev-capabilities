@@ -8,8 +8,8 @@
  * - progress: View progress log
  * - prd: PRD management commands
  * - spec: Spec file commands
- * - migrate: Migrate to new folder structure
  * - complete: Complete a PRD (extract findings via LLM and move to completed)
+ * - test: Run automated tests for a PRD
  */
 
 import { existsSync } from "node:fs";
@@ -28,9 +28,7 @@ import {
 	getProgress,
 	getSpec,
 	listPRDsByStatus,
-	migrateToStatusFolders,
 	movePRD,
-	needsMigration,
 	unblockStory,
 } from "./state.js";
 import type { PRD, PRDStatus, Story } from "./types";
@@ -96,11 +94,6 @@ async function promptForAnswers(prdName: string, story: Story): Promise<void> {
  */
 export async function runList(flags: Record<string, unknown>): Promise<void> {
 	debug("runList called", { cwd: process.cwd(), PRDS_DIR });
-
-	// Check for migration first
-	if (needsMigration()) {
-		console.log("⚠️  Old folder structure detected. Run 'omnidev ralph migrate' first.\n");
-	}
 
 	const statusFilter =
 		typeof flags["status"] === "string" ? (flags["status"] as PRDStatus) : undefined;
@@ -580,39 +573,6 @@ export async function runSpec(flags: Record<string, unknown>, prdName?: unknown)
 	}
 }
 
-/**
- * Migration command
- */
-export async function runMigrate(): Promise<void> {
-	if (!needsMigration()) {
-		console.log("No migration needed. Already using new folder structure.");
-		return;
-	}
-
-	console.log("Migrating to new folder structure...\n");
-	console.log("New structure:");
-	console.log("  .omni/state/ralph/prds/pending/   <- active development");
-	console.log("  .omni/state/ralph/prds/testing/   <- awaiting verification");
-	console.log("  .omni/state/ralph/prds/completed/ <- verified, findings extracted\n");
-
-	const { migrated, errors } = await migrateToStatusFolders();
-
-	if (migrated > 0) {
-		console.log(`✅ Migrated ${migrated} PRD(s)`);
-	}
-
-	if (errors.length > 0) {
-		console.log(`\n⚠️  Errors:`);
-		for (const error of errors) {
-			console.log(`  - ${error}`);
-		}
-	}
-
-	if (migrated === 0 && errors.length === 0) {
-		console.log("No PRDs to migrate.");
-	}
-}
-
 // Build commands
 const listCommand = command({
 	brief: "List all PRDs with status summary",
@@ -712,11 +672,6 @@ const specCommand = command({
 	func: runSpec,
 });
 
-const migrateCommand = command({
-	brief: "Migrate to new folder structure (pending/testing/completed)",
-	func: runMigrate,
-});
-
 /**
  * Complete a PRD - extract findings via LLM and move to completed
  */
@@ -792,6 +747,75 @@ const completeCommand = command({
 	func: runComplete,
 });
 
+/**
+ * Run tests for a PRD
+ */
+export async function runTest(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph test <prd-name> [--agent <agent-name>]");
+		console.error("\nAvailable PRDs in testing:");
+		const prds = await listPRDsByStatus("testing");
+		if (prds.length === 0) {
+			console.log("  (none in testing status)");
+			console.log("\nPRDs in pending:");
+			const pendingPrds = await listPRDsByStatus("pending");
+			for (const { name } of pendingPrds) {
+				console.log(`  - ${name}`);
+			}
+		} else {
+			for (const { name } of prds) {
+				console.log(`  - ${name}`);
+			}
+		}
+		process.exit(1);
+	}
+
+	const agentOverride = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
+
+	const status = findPRDLocation(prdName);
+	if (!status) {
+		console.error(`PRD not found: ${prdName}`);
+		process.exit(1);
+	}
+
+	// Import and run testing
+	const { runTesting } = await import("./testing.js");
+
+	try {
+		const { result } = await runTesting(prdName, agentOverride);
+
+		// Exit codes based on result
+		if (result === "verified") {
+			// Success - PRD completed automatically
+			process.exit(0);
+		} else if (result === "failed") {
+			// Failed - fix story created, moved to pending
+			process.exit(1);
+		} else {
+			// Unknown - manual action needed
+			process.exit(2);
+		}
+	} catch (error) {
+		console.error(`\nError running tests: ${error}`);
+		process.exit(1);
+	}
+}
+
+const testCommand = command({
+	brief: "Run verification tests for a PRD",
+	parameters: {
+		flags: {
+			agent: {
+				kind: "string",
+				brief: "Agent to use (e.g., claude, codex, amp)",
+				optional: true,
+			},
+		},
+		positional: [{ brief: "PRD name", kind: "string" }],
+	},
+	func: runTest,
+});
+
 // Export route map
 export const ralphRoutes = routes({
 	brief: "Ralph AI orchestrator",
@@ -802,7 +826,7 @@ export const ralphRoutes = routes({
 		progress: progressCommand,
 		prd: prdCommand,
 		spec: specCommand,
-		migrate: migrateCommand,
 		complete: completeCommand,
+		test: testCommand,
 	},
 });

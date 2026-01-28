@@ -47,6 +47,7 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 	const lines = content.split("\n");
 	const config: Partial<RalphConfig> = {
 		agents: {},
+		testing: {},
 	};
 
 	let currentSection: string | null = null;
@@ -67,6 +68,9 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 				const section = match[1];
 				if (section === "ralph") {
 					currentSection = "ralph";
+					currentAgent = null;
+				} else if (section === "testing") {
+					currentSection = "testing";
 					currentAgent = null;
 				} else if (section?.startsWith("agents.")) {
 					currentSection = "agents";
@@ -93,6 +97,19 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 					config.default_agent = value.replace(/["']/g, "");
 				} else if (key === "default_iterations") {
 					config.default_iterations = Number.parseInt(value, 10);
+				}
+			} else if (currentSection === "testing") {
+				if (!config.testing) {
+					config.testing = {};
+				}
+				if (key === "project_verification_instructions") {
+					config.testing.project_verification_instructions = value.replace(/["']/g, "");
+				} else if (key === "test_iterations") {
+					config.testing.test_iterations = Number.parseInt(value, 10);
+				} else if (key === "web_testing_enabled") {
+					config.testing.web_testing_enabled = value.replace(/["']/g, "") === "true";
+				} else if (key === "web_testing_base_url") {
+					config.testing.web_testing_base_url = value.replace(/["']/g, "");
 				}
 			} else if (currentSection === "agents" && currentAgent) {
 				const agent = config.agents?.[currentAgent];
@@ -314,6 +331,23 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 			console.log("Moving PRD to testing...");
 			await movePRD(prdName, "testing");
 
+			// Generate verification checklist
+			console.log("Generating verification checklist...");
+			try {
+				const { generateVerification, generateSimpleVerification } = await import(
+					"./verification.js"
+				);
+				try {
+					await generateVerification(prdName, agentConfig, runAgent);
+					console.log("Verification checklist generated with LLM.");
+				} catch {
+					console.log("LLM generation failed, using simple generator...");
+					await generateSimpleVerification(prdName);
+				}
+			} catch (error) {
+				console.log(`Warning: Could not generate verification checklist: ${error}`);
+			}
+
 			// Update lastRun
 			await updateLastRun(prdName, {
 				timestamp: new Date().toISOString(),
@@ -322,9 +356,10 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 				summary: "All stories completed. PRD moved to testing for verification.",
 			});
 
-			console.log("\nPRD moved to testing. Run manual verification, then:");
-			console.log(`  omnidev ralph prd ${prdName} --move completed  # if verified`);
-			console.log(`  omnidev ralph prd ${prdName} --move pending    # if issues found`);
+			console.log("\nPRD moved to testing. Next steps:");
+			console.log(`  omnidev ralph test ${prdName}              # run automated tests`);
+			console.log(`  omnidev ralph complete ${prdName}          # if verified`);
+			console.log(`  omnidev ralph prd ${prdName} --move pending # if issues found`);
 
 			return;
 		}
@@ -409,6 +444,23 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 				console.log("Moving PRD to testing...");
 				await movePRD(prdName, "testing");
 
+				// Generate verification checklist
+				console.log("Generating verification checklist...");
+				try {
+					const { generateVerification, generateSimpleVerification } = await import(
+						"./verification.js"
+					);
+					try {
+						await generateVerification(prdName, agentConfig, runAgent);
+						console.log("Verification checklist generated with LLM.");
+					} catch {
+						console.log("LLM generation failed, using simple generator...");
+						await generateSimpleVerification(prdName);
+					}
+				} catch (error) {
+					console.log(`Warning: Could not generate verification checklist: ${error}`);
+				}
+
 				await updateLastRun(prdName, {
 					timestamp: new Date().toISOString(),
 					storyId: "ALL",
@@ -416,9 +468,10 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 					summary: "All stories completed. PRD moved to testing for verification.",
 				});
 
-				console.log("\nPRD moved to testing. Run manual verification, then:");
-				console.log(`  omnidev ralph prd ${prdName} --move completed  # if verified`);
-				console.log(`  omnidev ralph prd ${prdName} --move pending    # if issues found`);
+				console.log("\nPRD moved to testing. Next steps:");
+				console.log(`  omnidev ralph test ${prdName}              # run automated tests`);
+				console.log(`  omnidev ralph complete ${prdName}          # if verified`);
+				console.log(`  omnidev ralph prd ${prdName} --move pending # if issues found`);
 			} else {
 				// Agent signaled completion but there are still pending stories
 				await updateLastRun(prdName, {

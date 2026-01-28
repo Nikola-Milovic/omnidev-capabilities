@@ -669,6 +669,79 @@ export async function migrateToStatusFolders(): Promise<{ migrated: number; erro
 }
 
 /**
+ * Get the next fix story ID for a PRD
+ */
+export async function getNextFixStoryId(prdName: string): Promise<string> {
+	const prd = await getPRD(prdName);
+	const fixStories = prd.stories.filter((s) => s.id.startsWith("FIX-"));
+	const maxNum = fixStories.reduce((max, s) => {
+		const num = Number.parseInt(s.id.replace("FIX-", ""), 10);
+		return Number.isNaN(num) ? max : Math.max(max, num);
+	}, 0);
+	return `FIX-${String(maxNum + 1).padStart(3, "0")}`;
+}
+
+/**
+ * Add a fix story to a PRD based on test failures
+ */
+export async function addFixStory(
+	prdName: string,
+	issues: string[],
+	testResultsPath: string,
+): Promise<string> {
+	const prd = await getPRD(prdName);
+	const storyId = await getNextFixStoryId(prdName);
+	const date = new Date().toISOString().split("T")[0];
+
+	const newStory = {
+		id: storyId,
+		title: `Fix bugs from testing (${date})`,
+		status: "pending" as const,
+		priority: 1, // High priority - fix bugs first
+		acceptanceCriteria: [
+			`Review test results at ${testResultsPath}`,
+			...issues.map((issue) => `Fix: ${issue}`),
+			"Ensure all items in verification.md pass",
+			"All project quality checks must pass",
+		],
+		questions: [],
+	};
+
+	prd.stories.push(newStory);
+	await savePRD(prdName, prd);
+
+	return storyId;
+}
+
+/**
+ * Get the test results directory path for a PRD
+ */
+export function getTestResultsDir(prdName: string): string | null {
+	const status = findPRDLocation(prdName);
+	if (!status) return null;
+	return join(process.cwd(), PRD_STATUS_DIRS[status], prdName, "test-results");
+}
+
+/**
+ * Clear the test results directory for a PRD
+ */
+export async function clearTestResults(prdName: string): Promise<void> {
+	const testResultsDir = getTestResultsDir(prdName);
+	if (!testResultsDir) {
+		throw new Error(`PRD not found: ${prdName}`);
+	}
+
+	if (existsSync(testResultsDir)) {
+		rmSync(testResultsDir, { recursive: true });
+	}
+
+	// Recreate empty directory structure
+	mkdirSync(testResultsDir, { recursive: true });
+	mkdirSync(join(testResultsDir, "screenshots"), { recursive: true });
+	mkdirSync(join(testResultsDir, "api-responses"), { recursive: true });
+}
+
+/**
  * Check if migration is needed
  */
 export function needsMigration(): boolean {

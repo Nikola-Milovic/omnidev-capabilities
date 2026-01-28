@@ -99,6 +99,34 @@ export interface AgentConfig {
 }
 
 /**
+ * Testing configuration
+ */
+export interface TestingConfig {
+	/** Instructions for project verification (e.g., "pnpm lint, pnpm typecheck must pass") */
+	project_verification_instructions?: string;
+	/** Max iterations for test agent */
+	test_iterations?: number;
+	/** Enable web testing with Playwriter */
+	web_testing_enabled?: boolean;
+	/** Base URL for web testing (e.g., "http://localhost:3000") */
+	web_testing_base_url?: string;
+}
+
+/**
+ * Issue found during testing
+ */
+export interface TestIssue {
+	/** Issue identifier */
+	id: string;
+	/** Description of the issue */
+	description: string;
+	/** Screenshot path if available */
+	screenshot?: string;
+	/** Severity level */
+	severity?: "critical" | "major" | "minor";
+}
+
+/**
  * Ralph configuration
  */
 export interface RalphConfig {
@@ -108,4 +136,40 @@ export interface RalphConfig {
 	default_iterations: number;
 	/** Available agents */
 	agents: Record<string, AgentConfig>;
+	/** Testing configuration */
+	testing?: TestingConfig;
+}
+
+/**
+ * Test result for a single verification item
+ */
+export interface TestResult {
+	/** The item being tested */
+	item: string;
+	/** Whether the test passed */
+	passed: boolean;
+	/** Reason for failure (if failed) */
+	reason?: string;
+	/** Additional details */
+	details?: string;
+}
+
+/**
+ * Full test report for a PRD
+ */
+export interface TestReport {
+	/** PRD name */
+	prdName: string;
+	/** When the test was run */
+	timestamp: string;
+	/** Individual test results */
+	testResults: TestResult[];
+	/** Summary stats */
+	summary: {
+		total: number;
+		passed: number;
+		failed: number;
+	};
+	/** Raw agent output */
+	agentOutput?: string;
 }

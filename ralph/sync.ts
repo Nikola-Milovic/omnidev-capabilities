@@ -17,6 +17,16 @@ const DEFAULT_CONFIG = `[ralph]
 default_agent = "claude"
 default_iterations = 10
 
+[testing]
+# Instructions for project verification (shown to test agent)
+project_verification_instructions = "Run pnpm lint, pnpm typecheck, and pnpm test. All must pass without errors."
+# Max iterations for test agent (default: 5)
+test_iterations = 5
+# Enable web testing with Playwriter MCP
+web_testing_enabled = false
+# Base URL for web testing
+web_testing_base_url = "http://localhost:3000"
+
 [agents.claude]
 command = "npx"
 args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-skip-permissions", "-p"]
@@ -39,6 +49,11 @@ export async function sync(): Promise<void> {
 	mkdirSync(RALPH_DIR, { recursive: true });
 	mkdirSync(PRDS_DIR, { recursive: true });
 	mkdirSync(COMPLETED_PRDS_DIR, { recursive: true });
+
+	// Create status subdirectories (new structure)
+	mkdirSync(join(PRDS_DIR, "pending"), { recursive: true });
+	mkdirSync(join(PRDS_DIR, "testing"), { recursive: true });
+	mkdirSync(join(PRDS_DIR, "completed"), { recursive: true });
 
 	// Create default config if not exists
 	if (!existsSync(CONFIG_PATH)) {

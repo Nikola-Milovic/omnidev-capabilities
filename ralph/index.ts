@@ -23,3 +23,5 @@ export { loadRalphConfig, runAgent, runOrchestration } from "./orchestrator.js";
 export { generatePrompt } from "./prompt.js";
 // Named exports for programmatic usage
 export * from "./state.js";
+export * from "./verification.js";
+export * from "./testing.js";

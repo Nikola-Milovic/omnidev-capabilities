@@ -1,20 +1,20 @@
 # Ralph - PRD-Driven Development Orchestrator
 
-Ralph automates feature development by breaking PRDs (Product Requirements Documents) into stories and orchestrating AI agents to implement them iteratively.
+Ralph automates feature development by breaking PRDs (Product Requirements Documents) into stories and orchestrating AI agents to implement them iteratively. It includes a full QA feedback loop with automated testing.
 
 ## Getting Started
 
 Ralph is a capability for [OmniDev](https://github.com/frmlabz/omnidev). Install OmniDev first, then run:
 
 ```bash
-omnidev init 
+omnidev init
 omnidev add cap --github frmlabz/omnidev-capabilities --path ralph
 omnidev sync
 ```
 
 This creates the Ralph directory structure at `.omni/state/ralph/`.
 
-## Common Commands
+## Commands
 
 ```bash
 # List all PRDs with status
@@ -26,13 +26,16 @@ omnidev ralph status <prd-name>
 # Start working on a PRD (runs AI agent iterations)
 omnidev ralph start <prd-name>
 
+# Run automated tests for a PRD
+omnidev ralph test <prd-name>
+
 # View progress log
 omnidev ralph progress <prd-name>
 
 # View spec file
 omnidev ralph spec <prd-name>
 
-# Complete a PRD (extract findings via LLM, move to completed)
+# Complete a PRD manually (extract findings, move to completed)
 omnidev ralph complete <prd-name>
 
 # Move PRD between states manually
@@ -43,21 +46,83 @@ omnidev ralph prd <prd-name> --move <status>
 
 PRDs move through three states:
 
+```
+┌──────────┐    ┌──────────┐    ┌───────────┐
+│ PENDING  │───▶│ TESTING  │───▶│ COMPLETED │
+│          │    │          │    │           │
+└──────────┘    └──────────┘    └───────────┘
+     ▲               │
+     │               │ PRD_FAILED
+     │               ▼
+     │         ┌──────────┐
+     └─────────│ Fix Story│
+               │ Created  │
+               └──────────┘
+```
+
 | Status | Description |
 |--------|-------------|
 | `pending` | Active development - stories being implemented |
-| `testing` | All stories done, awaiting manual verification |
+| `testing` | All stories done, verification checklist generated, ready for testing |
 | `completed` | Verified and findings extracted |
 
-When all stories are completed, the PRD automatically moves to `testing`. After you verify the implementation works, run `omnidev ralph complete <name>` to extract findings and move to `completed`.
+### Automatic Transitions
+
+1. **All stories complete** → PRD moves to `testing`, verification.md auto-generated
+2. **Tests pass (PRD_VERIFIED)** → PRD moves to `completed`, findings extracted
+3. **Tests fail (PRD_FAILED)** → Fix story created, PRD moves back to `pending`
+
+## Testing Workflow
+
+When all stories are completed, Ralph automatically:
+1. Generates `verification.md` - a checklist of things to test
+2. Moves the PRD to `testing` status
+
+Run automated tests:
+
+```bash
+omnidev ralph test my-feature
+```
+
+The test agent will:
+- Run project quality checks (lint, typecheck, tests)
+- Go through the verification checklist
+- Take screenshots of any issues (with Playwriter)
+- Save API responses for debugging
+
+### Test Result Signals
+
+The test agent outputs one of these signals:
+
+**Success:**
+```
+<test-result>PRD_VERIFIED</test-result>
+```
+→ PRD automatically moves to `completed`
+
+**Failure:**
+```
+<test-result>PRD_FAILED</test-result>
+<issues>
+- Issue description 1
+- Issue description 2
+</issues>
+```
+→ Fix story created (FIX-001, FIX-002, etc.), PRD moves back to `pending`
 
 ## PRD Structure
 
-Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with three files:
+Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with these files:
 
-### `prd.json`
+| File | Description |
+|------|-------------|
+| `prd.json` | PRD definition with metadata and stories |
+| `spec.md` | Detailed feature requirements |
+| `progress.txt` | Log of work done across iterations |
+| `verification.md` | Auto-generated test checklist (in testing status) |
+| `test-results/` | Test evidence folder |
 
-The PRD definition with metadata and stories:
+### prd.json
 
 ```json
 {
@@ -78,30 +143,60 @@ The PRD definition with metadata and stories:
 
 Story statuses: `pending`, `in_progress`, `completed`, `blocked`
 
-### `spec.md`
+### test-results/
 
-Detailed feature requirements in markdown. The AI agent reads this to understand what to build.
+Created during testing:
 
-### `progress.txt`
-
-Log of work done across iterations. Contains:
-
-- What was implemented per story
-- Files changed
-- Patterns discovered (used by future iterations)
+```
+test-results/
+├── report.md           # Main test report
+├── screenshots/        # Issue screenshots
+│   └── issue-001.png
+└── api-responses/      # API test results
+    └── endpoint.json
+```
 
 ## Configuration
 
-Agent configuration lives in `.omni/state/ralph/config.toml`:
+Agent and testing configuration lives in `.omni/state/ralph/config.toml`:
 
 ```toml
 [ralph]
 default_agent = "claude"
 default_iterations = 10
 
+[testing]
+# Instructions shown to test agent
+project_verification_instructions = "pnpm lint, pnpm typecheck, pnpm test must pass"
+test_iterations = 5
+# Enable web testing with Playwriter MCP
+web_testing_enabled = true
+web_testing_base_url = "http://localhost:3000"
+
 [agents.claude]
 command = "npx"
 args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-skip-permissions", "-p"]
+
+[agents.codex]
+command = "npx"
+args = ["-y", "@openai/codex", "exec", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "-"]
+```
+
+### Web Testing with Playwriter
+
+When `web_testing_enabled = true`, the test agent receives instructions for using Playwriter MCP:
+
+```bash
+# Create session and isolated page
+playwriter session new
+playwriter -s 1 -e "state.myPage = await context.newPage()"
+playwriter -s 1 -e "await state.myPage.goto('http://localhost:3000')"
+
+# Check page state
+playwriter -s 1 -e "console.log(await accessibilitySnapshot({ page: state.myPage }))"
+
+# Take screenshots
+playwriter -s 1 -e "await state.myPage.screenshot({ path: 'test-results/screenshots/issue-001.png', scale: 'css' })"
 ```
 
 ## Findings
@@ -117,4 +212,27 @@ PRDs can depend on other PRDs via the `dependencies` array. A PRD cannot start u
   "name": "user-dashboard",
   "dependencies": ["user-auth", "database-setup"]
 }
+```
+
+## Full QA Cycle Example
+
+```bash
+# 1. Create PRD (via /prd skill or manually)
+
+# 2. Start development
+omnidev ralph start my-feature
+# Agent implements stories iteratively
+# When all stories complete → moves to testing
+
+# 3. Run tests
+omnidev ralph test my-feature
+
+# 4a. If PRD_VERIFIED → automatically completed!
+
+# 4b. If PRD_FAILED → fix story created
+omnidev ralph start my-feature  # Fix the issues
+# Back to step 3
+
+# 5. View completed PRD findings
+cat .omni/state/ralph/findings.md
 ```
