@@ -198,12 +198,81 @@ export async function loadRalphConfig(): Promise<RalphConfig> {
 }
 
 /**
+ * Options for running an agent
+ */
+export interface RunAgentOptions {
+	/** Stream output in real-time (for agents that support --output-format stream-json) */
+	stream?: boolean;
+}
+
+/**
+ * Parse and display a stream-json line from Claude Code
+ */
+function handleStreamLine(line: string): void {
+	try {
+		const event = JSON.parse(line);
+
+		switch (event.type) {
+			case "assistant": {
+				// Extract text content from assistant messages
+				const content = event.message?.content;
+				if (Array.isArray(content)) {
+					for (const block of content) {
+						if (block.type === "text" && block.text) {
+							process.stdout.write(block.text);
+						} else if (block.type === "tool_use") {
+							console.log(`\n[Tool: ${block.name}]`);
+						}
+					}
+				}
+				break;
+			}
+			case "user": {
+				// Tool results - show tool name
+				const content = event.message?.content;
+				if (Array.isArray(content)) {
+					for (const block of content) {
+						if (block.type === "tool_result") {
+							// Optionally show truncated tool results
+							// console.log(`[Tool result received]`);
+						}
+					}
+				}
+				break;
+			}
+			case "result": {
+				// Final result - show summary
+				if (event.result) {
+					console.log(`\n\n--- Agent finished ---`);
+					if (event.duration_ms) {
+						console.log(`Duration: ${Math.round(event.duration_ms / 1000)}s`);
+					}
+					if (event.num_turns) {
+						console.log(`Turns: ${event.num_turns}`);
+					}
+				}
+				break;
+			}
+			// Ignore system/init events
+		}
+	} catch {
+		// Not JSON or parse error - print as-is for non-Claude agents
+		if (line.trim()) {
+			console.log(line);
+		}
+	}
+}
+
+/**
  * Spawns an agent process with the given prompt.
  */
 export async function runAgent(
 	prompt: string,
 	agentConfig: AgentConfig,
+	options?: RunAgentOptions,
 ): Promise<{ output: string; exitCode: number }> {
+	const stream = options?.stream ?? false;
+
 	return new Promise((resolve, reject) => {
 		const proc = spawn(agentConfig.command, agentConfig.args, {
 			stdio: ["pipe", "pipe", "pipe"],
@@ -211,13 +280,35 @@ export async function runAgent(
 
 		let stdout = "";
 		let stderr = "";
+		let lineBuffer = "";
 
 		proc.stdout?.on("data", (data) => {
-			stdout += data.toString();
+			const chunk = data.toString();
+			stdout += chunk;
+
+			if (stream) {
+				// Buffer and process complete lines for stream-json format
+				lineBuffer += chunk;
+				const lines = lineBuffer.split("\n");
+				// Keep the last incomplete line in buffer
+				lineBuffer = lines.pop() ?? "";
+
+				for (const line of lines) {
+					if (line.trim()) {
+						handleStreamLine(line);
+					}
+				}
+			}
 		});
 
 		proc.stderr?.on("data", (data) => {
-			stderr += data.toString();
+			const chunk = data.toString();
+			stderr += chunk;
+
+			if (stream) {
+				// Show stderr immediately
+				process.stderr.write(chunk);
+			}
 		});
 
 		proc.on("error", (error) => {
@@ -225,6 +316,10 @@ export async function runAgent(
 		});
 
 		proc.on("close", (code) => {
+			// Process any remaining buffered content
+			if (stream && lineBuffer.trim()) {
+				handleStreamLine(lineBuffer);
+			}
 			resolve({ output: stdout + stderr, exitCode: code ?? 1 });
 		});
 
@@ -463,14 +558,12 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 		// Generate prompt
 		const prompt = await generatePrompt(prd, story, prdName);
 
-		// Run agent
-		console.log("Spawning agent...");
-		const { output, exitCode } = await runAgent(prompt, agentConfig);
+		// Run agent with streaming output
+		console.log("Spawning agent...\n");
+		const { output, exitCode } = await runAgent(prompt, agentConfig, { stream: true });
 
-		// Log output
-		console.log("\n--- Agent Output ---");
-		console.log(output);
-		console.log(`--- Exit Code: ${exitCode} ---\n`);
+		// Log exit code (output already streamed)
+		console.log(`\n--- Exit Code: ${exitCode} ---\n`);
 
 		// Track iteration
 		await updateMetrics(prdName, { iterations: 1 });

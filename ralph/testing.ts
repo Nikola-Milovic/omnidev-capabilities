@@ -766,14 +766,12 @@ export async function runTesting(
 	// Generate test prompt
 	const prompt = await generateTestPrompt(prdName, config);
 
-	// Run agent
+	// Run agent with streaming output
 	console.log("\nSpawning test agent...\n");
-	const { output, exitCode } = await runAgent(prompt, agentConfig);
+	const { output, exitCode } = await runAgent(prompt, agentConfig, { stream: true });
 
-	// Log output
-	console.log("\n--- Agent Output ---");
-	console.log(output);
-	console.log(`--- Exit Code: ${exitCode} ---\n`);
+	// Log exit code (output already streamed)
+	console.log(`\n--- Exit Code: ${exitCode} ---\n`);
 
 	// Parse results
 	const report = parseTestReport(output, prdName);
