@@ -1,0 +1,9 @@
+[capability]
+id = "bash-guidelines"
+name = "Bash Guidelines"
+version = "0.1.0"
+description = "Provides bash guidelines to the agent"
+
+[capability.metadata]
+author = "OmniDev Team"
+repository = "https://github.com/omnidev/omnidev"

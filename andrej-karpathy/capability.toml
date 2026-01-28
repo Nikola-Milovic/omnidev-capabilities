@@ -1,0 +1,9 @@
+[capability]
+id = "andrej-karpathy"
+name = "Andrej Karpathy"
+version = "0.1.0"
+description = "Andrej Karpathy's core principles"
+
+[capability.metadata]
+author = "OmniDev Team"
+repository = "https://github.com/omnidev/omnidev"
