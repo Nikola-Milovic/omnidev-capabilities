@@ -17,7 +17,12 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"types": ["bun", "node"]
+		"types": ["bun", "node"],
+		"baseUrl": ".",
+		"paths": {
+			"@ralph": ["../../../ralph/lib/index.ts"],
+			"@ralph/*": ["../../../ralph/lib/*"]
+		}
 	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules", "dist"]

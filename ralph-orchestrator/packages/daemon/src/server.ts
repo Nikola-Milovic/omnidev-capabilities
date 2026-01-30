@@ -23,7 +23,7 @@ import type {
 } from "./types.js";
 import { type Worktree, getWorktrees } from "./worktree.js";
 
-// Import ralph lib
+// Import ralph lib (relative path since path aliases don't work at runtime in Bun)
 import {
 	type PRD,
 	ensureDirectories,

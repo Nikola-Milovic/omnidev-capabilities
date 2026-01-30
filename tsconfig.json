@@ -17,7 +17,12 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"jsx": "react-jsx"
+		"jsx": "react-jsx",
+		"baseUrl": ".",
+		"paths": {
+			"@ralph": ["./ralph/lib/index.ts"],
+			"@ralph/*": ["./ralph/lib/*"]
+		}
 	},
 	"include": ["**/*.ts", "**/*.tsx"],
 	"exclude": ["node_modules", "dist"]

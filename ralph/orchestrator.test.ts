@@ -84,7 +84,7 @@ it("loads valid config", async () => {
 it("throws if config doesn't exist", async () => {
 	rmSync(CONFIG_PATH);
 
-	await assert.rejects(loadRalphConfig(), /omni\.toml not found/);
+	await assert.rejects(loadRalphConfig(), /Configuration file not found/);
 });
 
 it("throws if config is invalid", async () => {

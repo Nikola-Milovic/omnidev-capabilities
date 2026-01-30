@@ -28,7 +28,105 @@ export type {
 	TestResult,
 } from "./types.js";
 
-// State management
+// Schemas (Zod validation)
+export {
+	StoryStatusSchema,
+	PRDStatusSchema,
+	StorySchema,
+	LastRunSchema,
+	PRDMetricsSchema,
+	PRDSchema,
+	AgentConfigSchema,
+	TestingConfigSchema,
+	ScriptsConfigSchema,
+	RalphConfigSchema,
+	TestResultSchema,
+	TestReportSchema,
+	TestIssueSchema,
+	DependencyInfoSchema,
+	PRDSummarySchema,
+	validatePRD,
+	validateStory,
+	validateRalphConfig,
+	type StoryStatusZ,
+	type PRDStatusZ,
+	type StoryZ,
+	type LastRunZ,
+	type PRDMetricsZ,
+	type PRDZ,
+	type AgentConfigZ,
+	type TestingConfigZ,
+	type ScriptsConfigZ,
+	type RalphConfigZ,
+	type TestResultZ,
+	type TestReportZ,
+	type TestIssueZ,
+	type DependencyInfoZ,
+	type PRDSummaryZ,
+} from "./schemas.js";
+
+// Core - State Machine
+export {
+	PRDStateMachine,
+	StoryStateMachine,
+	DisplayStateMachine,
+	type DisplayState,
+} from "./core/state-machine.js";
+
+// Core - PRD Store
+export {
+	PRDStore,
+	getDefaultStore,
+	createStore,
+} from "./core/prd-store.js";
+
+// Core - Config (Result-based API)
+export {
+	loadConfig,
+	getAgentConfig,
+	hasAgent,
+	getTestingConfig,
+	getScriptsConfig,
+} from "./core/config.js";
+
+// Core - Logger
+export {
+	type LogLevel,
+	type LogContext,
+	type LogEntry,
+	type LogOutput,
+	ConsoleOutput,
+	FileOutput,
+	EventOutput,
+	MemoryOutput,
+	Logger,
+	getLogger,
+	configureLogger,
+	createLogger,
+} from "./core/logger.js";
+
+// Orchestration - Agent Runner
+export {
+	type RunOptions as AgentRunOptions,
+	type AgentResult,
+	AgentRunner,
+	getAgentRunner,
+	createAgentRunner,
+} from "./orchestration/agent-runner.js";
+
+// Orchestration - Engine
+export {
+	type EngineContext,
+	type EngineEvent,
+	type RunOptions as EngineRunOptions,
+	type DevelopmentResult,
+	type TestRunResult,
+	OrchestrationEngine,
+	getEngine,
+	createEngine,
+} from "./orchestration/engine.js";
+
+// Legacy State management (for backward compatibility)
 export {
 	addFixStory,
 	appendProgress,
@@ -66,7 +164,8 @@ export {
 	updateStoryStatus,
 } from "./state.js";
 
-// Orchestration
+// Legacy Orchestration (for backward compatibility)
+// loadRalphConfig throws on error (legacy behavior)
 export {
 	loadRalphConfig,
 	runAgent,

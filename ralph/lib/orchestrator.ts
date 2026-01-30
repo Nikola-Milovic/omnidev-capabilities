@@ -2,10 +2,15 @@
  * Ralph Orchestrator
  *
  * Handles agent spawning and iteration loops for PRD-driven development.
+ *
+ * NOTE: This file is being refactored. The new architecture uses:
+ * - core/config.ts for configuration loading (smol-toml)
+ * - orchestration/engine.ts for the main orchestration loop
+ * - orchestration/agent-runner.ts for agent execution
+ *
+ * This file maintains backward compatibility during the transition.
  */
 
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { generatePrompt } from "./prompt.js";
 import {
@@ -23,8 +28,7 @@ import {
 	updateStoryStatus,
 } from "./state.js";
 import type { AgentConfig, RalphConfig, Story } from "./types.js";
-
-const CONFIG_PATH = "omni.toml";
+import { loadConfig } from "./core/config.js";
 
 // Track current state for Ctrl+C handler
 let currentPrdName: string | null = null;
@@ -33,168 +37,14 @@ let isShuttingDown = false;
 
 /**
  * Loads Ralph configuration from omni.toml [ralph] section
+ * Uses the new smol-toml based config loader
  */
 export async function loadRalphConfig(): Promise<RalphConfig> {
-	if (!existsSync(CONFIG_PATH)) {
-		throw new Error("omni.toml not found. Create it with a [ralph] section.");
+	const result = await loadConfig();
+	if (!result.ok) {
+		throw new Error(result.error!.message);
 	}
-
-	const content = await readFile(CONFIG_PATH, "utf-8");
-
-	// Parse TOML manually (simple parser for our needs)
-	const lines = content.split("\n");
-	const config: Partial<RalphConfig> = {
-		agents: {},
-		testing: {},
-		scripts: {},
-	};
-
-	let currentSection: string | null = null;
-	let currentAgent: string | null = null;
-	let inMultilineString = false;
-	let multilineKey: string | null = null;
-	let multilineValue = "";
-
-	for (const line of lines) {
-		const trimmed = line.trim();
-
-		// Handle multiline strings (triple quotes)
-		if (inMultilineString) {
-			if (trimmed === '"""') {
-				// End of multiline string
-				inMultilineString = false;
-				if (currentSection === "ralph.testing" && multilineKey === "instructions") {
-					if (!config.testing) config.testing = {};
-					config.testing.instructions = multilineValue.trim();
-				}
-				multilineKey = null;
-				multilineValue = "";
-			} else {
-				multilineValue += `${line}\n`;
-			}
-			continue;
-		}
-
-		// Skip empty lines and comments (when not in multiline)
-		if (trimmed === "" || trimmed.startsWith("#")) {
-			continue;
-		}
-
-		// Section headers
-		if (trimmed.startsWith("[")) {
-			const match = trimmed.match(/^\[([^\]]+)\]$/);
-			if (match) {
-				const section = match[1];
-				if (section === "ralph") {
-					currentSection = "ralph";
-					currentAgent = null;
-				} else if (section === "ralph.testing") {
-					currentSection = "ralph.testing";
-					currentAgent = null;
-				} else if (section === "ralph.scripts") {
-					currentSection = "ralph.scripts";
-					currentAgent = null;
-				} else if (section?.startsWith("ralph.agents.")) {
-					currentSection = "ralph.agents";
-					currentAgent = section.slice("ralph.agents.".length);
-					if (!config.agents) {
-						config.agents = {};
-					}
-					config.agents[currentAgent] = { command: "", args: [] };
-				} else {
-					// Not a ralph section, ignore
-					currentSection = null;
-					currentAgent = null;
-				}
-			}
-			continue;
-		}
-
-		// Check for multiline string start
-		if (trimmed.includes('= """')) {
-			const keyMatch = trimmed.match(/^(\w+)\s*=\s*"""/);
-			if (keyMatch) {
-				inMultilineString = true;
-				multilineKey = keyMatch[1] ?? null;
-				// Check if there's content after the opening """
-				const afterQuotes = trimmed.slice(trimmed.indexOf('"""') + 3);
-				if (afterQuotes) {
-					multilineValue = `${afterQuotes}\n`;
-				}
-				continue;
-			}
-		}
-
-		// Key-value pairs
-		const match = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-		if (match) {
-			const [, key, value] = match;
-			if (!key || !value) {
-				continue;
-			}
-
-			if (currentSection === "ralph") {
-				if (key === "default_agent") {
-					config.default_agent = value.replace(/["']/g, "");
-				} else if (key === "default_iterations") {
-					config.default_iterations = Number.parseInt(value, 10);
-				}
-			} else if (currentSection === "ralph.testing") {
-				if (!config.testing) {
-					config.testing = {};
-				}
-				if (key === "project_verification_instructions") {
-					config.testing.project_verification_instructions = value.replace(/["']/g, "");
-				} else if (key === "test_iterations") {
-					config.testing.test_iterations = Number.parseInt(value, 10);
-				} else if (key === "web_testing_enabled") {
-					config.testing.web_testing_enabled = value.replace(/["']/g, "") === "true";
-				} else if (key === "instructions" && !value.startsWith('"""')) {
-					config.testing.instructions = value.replace(/["']/g, "");
-				} else if (key === "health_check_timeout") {
-					config.testing.health_check_timeout = Number.parseInt(value, 10);
-				}
-			} else if (currentSection === "ralph.scripts") {
-				if (!config.scripts) {
-					config.scripts = {};
-				}
-				const scriptValue = value.replace(/["']/g, "");
-				if (key === "setup") {
-					config.scripts.setup = scriptValue;
-				} else if (key === "start") {
-					config.scripts.start = scriptValue;
-				} else if (key === "health_check") {
-					config.scripts.health_check = scriptValue;
-				} else if (key === "teardown") {
-					config.scripts.teardown = scriptValue;
-				}
-			} else if (currentSection === "ralph.agents" && currentAgent) {
-				const agent = config.agents?.[currentAgent];
-				if (!agent) {
-					continue;
-				}
-
-				if (key === "command") {
-					agent.command = value.replace(/["']/g, "");
-				} else if (key === "args") {
-					// Parse array
-					const arrayMatch = value.match(/\[(.*)\]/);
-					if (arrayMatch?.[1]) {
-						agent.args = arrayMatch[1].split(",").map((arg) => arg.trim().replace(/["']/g, ""));
-					}
-				}
-			}
-		}
-	}
-
-	// Validate required fields
-	if (!config.default_agent || !config.default_iterations) {
-		throw new Error(
-			"Invalid Ralph config in omni.toml: missing required fields (default_agent, default_iterations)",
-		);
-	}
-
-	return config as RalphConfig;
+	return result.data!;
 }
 
 /**
