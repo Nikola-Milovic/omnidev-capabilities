@@ -7,7 +7,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { generatePrompt } from "./prompt.ts";
+import { generatePrompt } from "./prompt.js";
 import {
 	extractAndSaveFindings,
 	getNextStory,
@@ -21,8 +21,8 @@ import {
 	updateLastRun,
 	updateMetrics,
 	updateStoryStatus,
-} from "./state.ts";
-import type { AgentConfig, RalphConfig, Story } from "./types.d.ts";
+} from "./state.js";
+import type { AgentConfig, RalphConfig, Story } from "./types.js";
 
 const CONFIG_PATH = "omni.toml";
 

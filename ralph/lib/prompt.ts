@@ -4,8 +4,8 @@
  * Generates agent prompts from PRD context for orchestration.
  */
 
-import { getProgress, getPRD, getSpec } from "./state.ts";
-import type { PRD, Story } from "./types.d.ts";
+import { findPRDLocation, getProgress, getPRD, getSpec } from "./state.js";
+import type { PRD, Story } from "./types.js";
 
 /**
  * Extract codebase patterns from progress content
@@ -35,8 +35,6 @@ function extractPatterns(progressContent: string): string[] {
  * Generates a prompt for the agent based on PRD and current story.
  */
 export async function generatePrompt(prd: PRD, story: Story, prdName: string): Promise<string> {
-	// Find PRD location
-	const { findPRDLocation } = await import("./state.js");
 	const prdStatus = findPRDLocation(prdName) ?? "pending";
 
 	// Load progress and spec

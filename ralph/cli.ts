@@ -30,8 +30,8 @@ import {
 	listPRDsByStatus,
 	movePRD,
 	unblockStory,
-} from "./state.js";
-import type { PRD, PRDStatus, Story } from "./types";
+} from "./lib/index.js";
+import type { PRD, PRDStatus, Story } from "./lib/types.js";
 
 const RALPH_DIR = ".omni/state/ralph";
 const PRDS_DIR = join(RALPH_DIR, "prds");
@@ -403,7 +403,7 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 	}
 
 	// Check for blocked stories before starting
-	const { hasBlockedStories } = await import("./state.js");
+	const { hasBlockedStories } = await import("./lib/index.js");
 	const blockedStories = await hasBlockedStories(prdName);
 
 	if (blockedStories.length > 0) {
@@ -448,7 +448,7 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 	}
 
 	// Import and run orchestration
-	const { runOrchestration } = await import("./orchestrator.js");
+	const { runOrchestration } = await import("./lib/index.js");
 	await runOrchestration(prdName, agentOverride);
 }
 
@@ -731,7 +731,7 @@ export async function runComplete(
 	console.log(`Completing PRD: ${prdName}`);
 
 	// Load config and run LLM to extract findings
-	const { loadRalphConfig, runAgent } = await import("./orchestrator.js");
+	const { loadRalphConfig, runAgent } = await import("./lib/index.js");
 
 	try {
 		const config = await loadRalphConfig();
@@ -798,7 +798,7 @@ export async function runTest(flags: Record<string, unknown>, prdName?: unknown)
 	}
 
 	// Import and run testing
-	const { runTesting } = await import("./testing.js");
+	const { runTesting } = await import("./lib/index.js");
 
 	try {
 		const { result } = await runTesting(prdName, agentOverride);

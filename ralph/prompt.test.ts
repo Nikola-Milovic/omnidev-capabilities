@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
-import { generatePrompt } from "./prompt.ts";
-import type { PRD, Story } from "./types.ts";
+import { generatePrompt } from "./lib/index.js";
+import type { PRD, Story } from "./lib/types.js";
 
 const TEST_DIR = join(process.cwd(), ".test-ralph-prompt");
 const RALPH_DIR = join(TEST_DIR, ".omni/state/ralph");
@@ -124,7 +124,7 @@ it("includes recent progress", async () => {
 	await createTestPRD("progress-test", prd);
 
 	// Add progress
-	const { appendProgress } = await import("./state.ts");
+	const { appendProgress } = await import("./lib/index.js");
 	await appendProgress("progress-test", "## Test Progress\n- Did something");
 
 	const prompt = await generatePrompt(prd, story, "progress-test");

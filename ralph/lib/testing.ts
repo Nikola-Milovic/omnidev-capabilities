@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { loadRalphConfig, runAgent } from "./orchestrator.ts";
+import { loadRalphConfig, runAgent } from "./orchestrator.js";
 import {
 	addFixStory,
 	clearTestResults,
@@ -19,9 +19,9 @@ import {
 	getProgress,
 	getSpec,
 	movePRD,
-} from "./state.ts";
-import type { RalphConfig, TestReport, TestResult } from "./types.d.ts";
-import { getVerification, hasVerification } from "./verification.ts";
+} from "./state.js";
+import type { RalphConfig, TestReport, TestResult } from "./types.js";
+import { getVerification, hasVerification } from "./verification.js";
 
 /**
  * Run a script from a configured path

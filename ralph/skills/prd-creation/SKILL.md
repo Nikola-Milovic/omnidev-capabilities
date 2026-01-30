@@ -27,7 +27,7 @@ Ask 3-5 focused questions. Don't proceed until you have clear answers.
 ### 2. Create the PRD Folder Structure
 
 ```
-.omni/state/ralph/prds/<prd-name>/
+.omni/state/ralph/prds/<pending>/<prd-name>/
   ├── prd.json       # Orchestration file with stories
   ├── spec.md        # Detailed feature specification
   └── progress.txt   # Progress log (empty initially)
@@ -98,12 +98,14 @@ Break down the work into stories (manageable chunks):
 ```
 
 **PRD fields:**
+
 - `name`: Unique identifier (matches folder name)
 - `description`: Brief description of the feature
 - `createdAt`: ISO timestamp of creation
 - `dependencies`: Array of PRD names that must be completed first (can be empty)
 
 **Story fields:**
+
 - `id`: Unique identifier (US-001, US-002, etc.)
 - `title`: Short descriptive title
 - `acceptanceCriteria`: Array of verifiable criteria for this chunk
@@ -124,6 +126,7 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 ```
 
 **When to use dependencies:**
+
 - The feature requires code from another PRD
 - There's a logical order (e.g., database schema before API)
 - Multiple PRDs are planned and should run in sequence
@@ -203,7 +206,7 @@ Before finalizing:
 Tell the user:
 
 ```
-PRD created at .omni/state/ralph/prds/<name>/
+PRD created at .omni/state/ralph/prds/<pending>/<name>/
 
 To start Ralph orchestration:
   omnidev ralph start <name>

@@ -7,7 +7,16 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentConfig, LastRun, PRD, PRDStatus, Story, StoryStatus } from "./types.js";
+import type {
+	AgentConfig,
+	DependencyInfo,
+	LastRun,
+	PRD,
+	PRDStatus,
+	PRDSummary,
+	Story,
+	StoryStatus,
+} from "./types.js";
 
 const RALPH_DIR = ".omni/state/ralph";
 const FINDINGS_PATH = join(RALPH_DIR, "findings.md");
@@ -139,6 +148,47 @@ export async function listPRDs(): Promise<string[]> {
 	}
 
 	return results;
+}
+
+/**
+ * Get PRD summaries for daemon API (richer data structure)
+ */
+export async function getPRDSummaries(includeCompleted = false): Promise<PRDSummary[]> {
+	const prds = await listPRDsByStatus();
+	const summaries: PRDSummary[] = [];
+
+	for (const { name, status } of prds) {
+		if (!includeCompleted && status === "completed") continue;
+
+		try {
+			const prd = await getPRD(name);
+			const { canStart, unmetDependencies } = await canStartPRD(name);
+			const blocked = prd.stories.filter((s) => s.status === "blocked");
+
+			summaries.push({
+				name: prd.name,
+				status,
+				description: prd.description,
+				progress: {
+					completed: prd.stories.filter((s) => s.status === "completed").length,
+					total: prd.stories.length,
+					inProgress: prd.stories.filter((s) => s.status === "in_progress").length,
+					blocked: blocked.length,
+				},
+				canStart,
+				hasBlockedStories: blocked.length > 0,
+				dependencies: prd.dependencies ?? [],
+				unmetDependencies,
+				startedAt: prd.startedAt,
+				completedAt: prd.completedAt,
+				metrics: prd.metrics,
+			});
+		} catch {
+			// Skip invalid PRDs
+		}
+	}
+
+	return summaries;
 }
 
 /**
@@ -445,18 +495,6 @@ export async function canStartPRD(
 		canStart: unmetDependencies.length === 0,
 		unmetDependencies,
 	};
-}
-
-/**
- * Dependency information for a single PRD
- */
-export interface DependencyInfo {
-	name: string;
-	status: PRDStatus;
-	dependencies: string[];
-	isComplete: boolean;
-	canStart: boolean;
-	unmetDependencies: string[];
 }
 
 /**

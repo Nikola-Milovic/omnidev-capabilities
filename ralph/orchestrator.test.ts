@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
-import { loadRalphConfig, runAgent } from "./orchestrator.ts";
-import type { PRD } from "./types.ts";
+import { loadRalphConfig, runAgent } from "./lib/index.js";
+import type { PRD } from "./lib/types.js";
 
 const TEST_DIR = join(process.cwd(), ".test-ralph-orchestrator");
 const RALPH_DIR = join(TEST_DIR, ".omni/state/ralph");
@@ -125,7 +125,7 @@ it("returns exit code on failure", async () => {
 });
 
 it("throws if PRD doesn't exist", async () => {
-	const { runOrchestration } = await import("./orchestrator.ts");
+	const { runOrchestration } = await import("./lib/index.js");
 
 	await assert.rejects(runOrchestration("nonexistent"), /PRD not found: nonexistent/);
 });
@@ -145,7 +145,7 @@ it("stops when blocked stories exist", async () => {
 		],
 	});
 
-	const { runOrchestration } = await import("./orchestrator.ts");
+	const { runOrchestration } = await import("./lib/index.js");
 
 	// Should stop immediately due to blocked story
 	await runOrchestration("blocked-prd");
@@ -168,7 +168,7 @@ it("completes when no stories remain", async () => {
 		],
 	});
 
-	const { runOrchestration } = await import("./orchestrator.ts");
+	const { runOrchestration } = await import("./lib/index.js");
 
 	// Should complete immediately without running agent
 	await runOrchestration("completed-prd");

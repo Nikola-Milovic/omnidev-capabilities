@@ -7,8 +7,8 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { findPRDLocation, getPRD, getProgress, getSpec } from "./state.ts";
-import type { AgentConfig } from "./types.d.ts";
+import { findPRDLocation, getPRD, getProgress, getSpec } from "./state.js";
+import type { AgentConfig } from "./types.js";
 
 const RALPH_DIR = ".omni/state/ralph";
 const PRDS_DIR = join(RALPH_DIR, "prds");

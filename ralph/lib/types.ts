@@ -191,3 +191,37 @@ export interface TestReport {
 	/** Raw agent output */
 	agentOutput?: string;
 }
+
+/**
+ * Dependency information for a single PRD
+ */
+export interface DependencyInfo {
+	name: string;
+	status: PRDStatus;
+	dependencies: string[];
+	isComplete: boolean;
+	canStart: boolean;
+	unmetDependencies: string[];
+}
+
+/**
+ * PRD summary for list operations
+ */
+export interface PRDSummary {
+	name: string;
+	status: PRDStatus;
+	description: string;
+	progress: {
+		completed: number;
+		total: number;
+		inProgress: number;
+		blocked: number;
+	};
+	canStart: boolean;
+	hasBlockedStories: boolean;
+	dependencies: string[];
+	unmetDependencies: string[];
+	startedAt?: string;
+	completedAt?: string;
+	metrics?: PRDMetrics;
+}

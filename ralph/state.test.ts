@@ -26,8 +26,8 @@ import {
 	updateLastRun,
 	updatePRD,
 	updateStoryStatus,
-} from "./state.ts";
-import type { PRD, PRDStatus } from "./types.ts";
+} from "./lib/index.js";
+import type { PRD, PRDStatus } from "./lib/types.js";
 
 let testDir: string;
 let originalCwd: string;
