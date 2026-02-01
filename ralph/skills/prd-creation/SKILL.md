@@ -11,20 +11,60 @@ Create structured PRDs for Ralph orchestration to enable AI-driven development.
 
 When a user requests a PRD:
 
-### 1. Interview the User
+### 1. Research & Explore
 
-**Before writing anything**, ask clarifying questions to understand:
+**Before interviewing**, gather context using specialized agents so you can ask informed questions:
 
-- **What is the feature?** Get a clear, concise description
-- **Who is it for?** Target users and use cases
-- **What are the key requirements?** Must-have functionality
-- **What are the edge cases?** Error handling, validation, limits
-- **What are the acceptance criteria?** How do we know it's done?
-- **Any technical constraints?** Existing patterns, dependencies, limitations
+#### Use the `explore` agent to understand the codebase:
+- Find existing patterns and conventions
+- Locate related code that the feature will integrate with
+- Identify dependencies and constraints
+- Understand the project structure
 
-Ask 3-5 focused questions. Don't proceed until you have clear answers.
+Example explorations:
+- "Where is authentication handled?"
+- "What patterns are used for API endpoints?"
+- "Find existing database schemas"
 
-### 2. Create the PRD Folder Structure
+#### Use the `research` agent for external knowledge:
+- Best practices for the feature type
+- Library/framework documentation
+- Common pitfalls and edge cases
+- Security considerations
+
+Example research:
+- "Best practices for file upload handling"
+- "OAuth 2.0 implementation patterns"
+- "Rate limiting strategies"
+
+**This context helps you ask better questions** and identify constraints the user may not be aware of.
+
+### 2. Interview the User
+
+With codebase and domain knowledge in hand, conduct an **in-depth interview using the AskUserQuestion tool**.
+
+**Interview approach:**
+
+- Ask about **anything relevant**: technical implementation, UI/UX design, user flows, performance concerns, security implications, tradeoffs, edge cases, error handling, future extensibility, integration points, data modeling, state management, testing strategy, deployment considerations, etc.
+- **Avoid obvious questions** - use your research and codebase exploration to ask informed, specific questions that demonstrate understanding
+- **Continue interviewing in multiple rounds** until you have a complete picture - don't rush to finish
+- **Surface tradeoffs** you've identified and ask the user to choose between approaches
+- **Challenge assumptions** - if something seems unclear or potentially problematic, probe deeper
+
+**Topics to explore (as relevant to the feature):**
+
+- **Technical implementation**: Architecture decisions, patterns to follow, performance requirements, scalability concerns
+- **UI/UX**: User flows, interaction patterns, responsive design, accessibility, error states, loading states, empty states
+- **Data & state**: Data structures, storage, caching, synchronization, validation rules
+- **Integration**: How it connects to existing systems, API contracts, backwards compatibility
+- **Edge cases**: Failure modes, race conditions, concurrent access, resource limits
+- **Security**: Authentication, authorization, input validation, data exposure
+- **Testing**: What needs to be tested, acceptance criteria, how to verify correctness
+- **Tradeoffs**: Speed vs. quality, simplicity vs. flexibility, consistency vs. innovation
+
+**Use the AskUserQuestion tool** to present options, gather preferences, and validate your understanding. Keep interviewing until you have enough detail to write a comprehensive spec that an implementer could follow without further clarification.
+
+### 3. Create the PRD Folder Structure
 
 PRDs are stored in status-based folders:
 - `pending/` - PRDs not yet started
@@ -43,7 +83,7 @@ Create new PRDs in the `pending` folder:
 
 When `omnidev ralph start` is run, the PRD moves to `in_progress/`.
 
-### 3. Write the Spec File (spec.md)
+### 4. Write the Spec File (spec.md)
 
 The spec describes WHAT the feature should do (requirements), NOT HOW to implement it.
 
@@ -81,7 +121,7 @@ The feature is complete when:
 - [ ] No type errors
 ```
 
-### 4. Write the PRD File (prd.json)
+### 5. Write the PRD File (prd.json)
 
 Break down the work into stories (manageable chunks):
 
@@ -143,7 +183,7 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 
 **Note:** `omnidev ralph start` will refuse to run a PRD with incomplete dependencies.
 
-### 5. Create Empty Progress File
+### 6. Create Empty Progress File
 
 ```
 ## Codebase Patterns
@@ -156,6 +196,38 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 
 Started: [Date]
 ```
+
+### 7. Review with PRD Reviewer
+
+**Before finalizing**, run the `prd-reviewer` agent to validate the PRD.
+
+The reviewer is an expert software architect and product manager who checks:
+
+#### Goal Alignment
+- Is the problem clearly stated?
+- Are goals specific and measurable?
+- Is there scope creep?
+- Can we objectively determine success?
+
+#### Structural Quality
+- Do early stories establish foundations (schema, types, config)?
+- Are stories ordered so each builds on previous work?
+- Is there a final story for end-to-end verification?
+- Is each story completable in one iteration?
+- Are acceptance criteria verifiable?
+
+**The reviewer will provide:**
+- Critical issues that MUST be fixed
+- Recommendations that SHOULD be addressed
+- Missing stories to add
+- A verdict: READY TO PROCEED or NEEDS REVISION
+
+**If the verdict is NEEDS REVISION:**
+1. Address the critical issues
+2. Update spec.md and prd.json
+3. Run the reviewer again
+
+**Only proceed when the reviewer approves the PRD.**
 
 ## Best Practices
 
@@ -202,7 +274,7 @@ Started: [Date]
 
 ## Quality Checks
 
-Before finalizing:
+The `prd-reviewer` agent validates these automatically, but keep them in mind while writing:
 
 - [ ] User has confirmed understanding of requirements
 - [ ] spec.md describes the feature requirements clearly
@@ -210,8 +282,10 @@ Before finalizing:
 - [ ] Priorities are ordered correctly (1-10, no gaps)
 - [ ] Acceptance criteria are specific and verifiable
 - [ ] Stories build on each other logically
+- [ ] First story sets up foundations (schema, types, config)
+- [ ] Last story validates the complete feature
 
-## After Creation
+## After Creation (Post-Review)
 
 Tell the user:
 

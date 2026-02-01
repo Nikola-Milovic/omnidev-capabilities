@@ -95,7 +95,7 @@ ${criteriaLines}${questionsAnswersText}
 
 ### 1. Read Context
 
-**Check the PRD and progress first:**
+**Check the PRD, progress, and project patterns first:**
 
 \`\`\`bash
 # Read the PRD to understand the feature
@@ -193,8 +193,24 @@ Add an entry to progress.txt:
 **Patterns discovered:**
 - Pattern or approach that worked well
 
+**Mistakes corrected:**
+- Description of what went wrong and how it was fixed (if any)
+
 ---
 \`\`\`
+
+**IMPORTANT: Document Your Corrections**
+
+If you make a mistake during implementation and then correct it:
+- ALWAYS document what went wrong in the "Mistakes corrected" section
+- Explain WHY it was wrong and HOW you fixed it
+- These learnings are extremely valuable for future iterations
+
+Examples of things to document:
+- "Used wrong import path, should be relative not absolute"
+- "Forgot to handle null case, added guard clause"
+- "Initial approach caused type error, switched to using generics"
+- "Missed adding index on frequently queried column"
 
 ### 8. Check for Completion
 
@@ -250,6 +266,7 @@ npm run lint          # Fix lint issues
 - **Read the spec first** - The story title is just a summary
 - **Keep checks green** - Never commit failing tests or lint errors
 - **Document patterns** - Help future iterations by updating progress.txt
+- **Document mistakes** - If you correct an error, write it down for future learning
 - **Ask when blocked** - Use the questions array, don't guess
 - **Do NOT use type escape hatches** (\`any\`, \`as unknown\`)
 
