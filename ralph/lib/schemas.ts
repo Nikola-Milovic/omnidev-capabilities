@@ -96,6 +96,14 @@ export const ScriptsConfigSchema = z.object({
 });
 
 /**
+ * Documentation configuration schema
+ */
+export const DocsConfigSchema = z.object({
+	path: z.string().min(1),
+	auto_update: z.boolean().optional().default(true),
+});
+
+/**
  * Ralph configuration schema
  */
 export const RalphConfigSchema = z.object({
@@ -104,6 +112,7 @@ export const RalphConfigSchema = z.object({
 	agents: z.record(z.string(), AgentConfigSchema),
 	testing: TestingConfigSchema.optional(),
 	scripts: ScriptsConfigSchema.optional(),
+	docs: DocsConfigSchema.optional(),
 });
 
 /**
@@ -185,6 +194,7 @@ export type PRDZ = z.infer<typeof PRDSchema>;
 export type AgentConfigZ = z.infer<typeof AgentConfigSchema>;
 export type TestingConfigZ = z.infer<typeof TestingConfigSchema>;
 export type ScriptsConfigZ = z.infer<typeof ScriptsConfigSchema>;
+export type DocsConfigZ = z.infer<typeof DocsConfigSchema>;
 export type RalphConfigZ = z.infer<typeof RalphConfigSchema>;
 export type TestResultZ = z.infer<typeof TestResultSchema>;
 export type TestReportZ = z.infer<typeof TestReportSchema>;

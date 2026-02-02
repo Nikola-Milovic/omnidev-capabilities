@@ -22,6 +22,7 @@ import {
 } from "./state.js";
 import type { RalphConfig, TestReport, TestResult } from "./types.js";
 import { getVerification, hasVerification } from "./verification.js";
+import { updateDocumentation } from "./documentation.js";
 
 /**
  * Run a script from a configured path
@@ -942,6 +943,22 @@ export async function runTesting(
 		// Extract findings
 		console.log("Extracting findings...");
 		await extractAndSaveFindings(prdName);
+
+		// Update documentation if configured
+		if (config.docs?.path && config.docs.auto_update !== false) {
+			const docsPath = join(process.cwd(), config.docs.path);
+			try {
+				const docResults = await updateDocumentation(prdName, docsPath, agentConfig, runAgent);
+				if (docResults.updated.length > 0) {
+					console.log(`Documentation updated: ${docResults.updated.join(", ")}`);
+				}
+			} catch (error) {
+				console.log(
+					`Warning: Documentation update failed: ${error instanceof Error ? error.message : error}`,
+				);
+				// Don't fail the completion if docs update fails
+			}
+		}
 
 		// Move to completed
 		await movePRD(prdName, "completed");

@@ -147,6 +147,16 @@ export interface TestIssue {
 }
 
 /**
+ * Documentation configuration
+ */
+export interface DocsConfig {
+	/** Path to documentation directory (relative to project root) */
+	path: string;
+	/** Whether to automatically update docs on PRD completion (default: true) */
+	auto_update?: boolean;
+}
+
+/**
  * Ralph configuration
  */
 export interface RalphConfig {
@@ -160,6 +170,8 @@ export interface RalphConfig {
 	testing?: TestingConfig;
 	/** Scripts configuration - paths to lifecycle scripts */
 	scripts?: ScriptsConfig;
+	/** Documentation configuration */
+	docs?: DocsConfig;
 }
 
 /**

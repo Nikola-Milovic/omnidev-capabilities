@@ -13,6 +13,7 @@
 export type {
 	AgentConfig,
 	DependencyInfo,
+	DocsConfig,
 	LastRun,
 	PRD,
 	PRDMetrics,
@@ -39,6 +40,7 @@ export {
 	AgentConfigSchema,
 	TestingConfigSchema,
 	ScriptsConfigSchema,
+	DocsConfigSchema,
 	RalphConfigSchema,
 	TestResultSchema,
 	TestReportSchema,
@@ -57,6 +59,7 @@ export {
 	type AgentConfigZ,
 	type TestingConfigZ,
 	type ScriptsConfigZ,
+	type DocsConfigZ,
 	type RalphConfigZ,
 	type TestResultZ,
 	type TestReportZ,
@@ -214,6 +217,19 @@ export {
 	canTransition,
 	type RunOptions,
 } from "./api.js";
+
+// Documentation
+export {
+	DOCUMENTATION_PRINCIPLES,
+	DOCUMENTATION_OUTPUT_FORMAT,
+	findDocFiles,
+	generateDocumentationUpdatePrompt,
+	parseDocumentationUpdates,
+	applyDocumentationUpdates,
+	updateDocumentation,
+	type DocFile,
+	type DocumentationContext,
+} from "./documentation.js";
 
 // Result types
 export {
