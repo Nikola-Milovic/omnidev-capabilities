@@ -11,35 +11,35 @@ Create structured PRDs for Ralph orchestration to enable AI-driven development.
 
 When a user requests a PRD:
 
-### 1. Research & Explore
+### 1. Check for Existing Documents
+
+**Before starting from scratch**, check if the user has referenced or if there exist any related spec, plan, or requirements files:
+
+- Search for existing specs, plans, or requirement docs the user mentioned
+- Check `.omni/state/ralph/prds/` for related or prior PRDs on the same topic
+- If found, **use them as the foundation** and expand from there — do not duplicate or recreate work that already exists
+
+### 2. Research & Explore
 
 **Before interviewing**, gather context using specialized agents so you can ask informed questions:
 
-#### Use the `explore` agent to understand the codebase:
-- Find existing patterns and conventions
+#### Use the `explore` agent to understand the codebase
+
+- Find existing patterns and conventions (export patterns, manifest files, config conventions)
 - Locate related code that the feature will integrate with
 - Identify dependencies and constraints
 - Understand the project structure
 
-Example explorations:
-- "Where is authentication handled?"
-- "What patterns are used for API endpoints?"
-- "Find existing database schemas"
+#### Use the `research` agent for external knowledge
 
-#### Use the `research` agent for external knowledge:
 - Best practices for the feature type
 - Library/framework documentation
 - Common pitfalls and edge cases
 - Security considerations
 
-Example research:
-- "Best practices for file upload handling"
-- "OAuth 2.0 implementation patterns"
-- "Rate limiting strategies"
-
 **This context helps you ask better questions** and identify constraints the user may not be aware of.
 
-### 2. Interview the User
+### 3. Interview the User
 
 With codebase and domain knowledge in hand, conduct an **in-depth interview using the AskUserQuestion tool**.
 
@@ -64,9 +64,10 @@ With codebase and domain knowledge in hand, conduct an **in-depth interview usin
 
 **Use the AskUserQuestion tool** to present options, gather preferences, and validate your understanding. Keep interviewing until you have enough detail to write a comprehensive spec that an implementer could follow without further clarification.
 
-### 3. Create the PRD Folder Structure
+### 4. Create the PRD Folder Structure
 
 PRDs are stored in status-based folders:
+
 - `pending/` - PRDs not yet started
 - `in_progress/` - PRDs actively being worked on
 - `testing/` - PRDs with all stories complete, awaiting verification
@@ -83,7 +84,7 @@ Create new PRDs in the `pending` folder:
 
 When `omnidev ralph start` is run, the PRD moves to `in_progress/`.
 
-### 4. Write the Spec File (spec.md)
+### 5. Write the Spec File (spec.md)
 
 The spec describes WHAT the feature should do (requirements), NOT HOW to implement it.
 
@@ -121,7 +122,7 @@ The feature is complete when:
 - [ ] No type errors
 ```
 
-### 5. Write the PRD File (prd.json)
+### 6. Write the PRD File (prd.json)
 
 Break down the work into stories (manageable chunks):
 
@@ -183,7 +184,7 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 
 **Note:** `omnidev ralph start` will refuse to run a PRD with incomplete dependencies.
 
-### 6. Create Empty Progress File
+### 7. Create Empty Progress File
 
 ```
 ## Codebase Patterns
@@ -197,37 +198,14 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 Started: [Date]
 ```
 
-### 7. Review with PRD Reviewer
+### 8. Run PRD Review (Automatic)
 
-**Before finalizing**, run the `prd-reviewer` agent to validate the PRD.
+**This step is mandatory.** After writing the PRD files, immediately run the `prd-reviewer` agent — do not wait for the user to ask.
 
-The reviewer is an expert software architect and product manager who checks:
+The reviewer checks goal alignment and structural quality. It will return a verdict:
 
-#### Goal Alignment
-- Is the problem clearly stated?
-- Are goals specific and measurable?
-- Is there scope creep?
-- Can we objectively determine success?
-
-#### Structural Quality
-- Do early stories establish foundations (schema, types, config)?
-- Are stories ordered so each builds on previous work?
-- Is there a final story for end-to-end verification?
-- Is each story completable in one iteration?
-- Are acceptance criteria verifiable?
-
-**The reviewer will provide:**
-- Critical issues that MUST be fixed
-- Recommendations that SHOULD be addressed
-- Missing stories to add
-- A verdict: READY TO PROCEED or NEEDS REVISION
-
-**If the verdict is NEEDS REVISION:**
-1. Address the critical issues
-2. Update spec.md and prd.json
-3. Run the reviewer again
-
-**Only proceed when the reviewer approves the PRD.**
+- **READY TO PROCEED**: Inform the user the PRD is ready.
+- **NEEDS REVISION**: Fix critical issues, update spec.md and prd.json, then run the reviewer again. After any renumbering or restructuring, verify all FR numbers, story IDs, and priority numbers are sequential and unique — no duplicates. Repeat until approved.
 
 ## Best Practices
 
@@ -274,27 +252,27 @@ The reviewer is an expert software architect and product manager who checks:
 
 ## Quality Checks
 
-The `prd-reviewer` agent validates these automatically, but keep them in mind while writing:
+The `prd-reviewer` validates these automatically, but keep them in mind while writing:
 
 - [ ] User has confirmed understanding of requirements
+- [ ] Existing spec/plan files were used as foundation (if any existed)
 - [ ] spec.md describes the feature requirements clearly
-- [ ] All stories have unique IDs in sequence
+- [ ] All FR numbers in spec.md are sequential and unique (no duplicates)
+- [ ] All story IDs in prd.json are sequential and unique (no duplicates)
 - [ ] Priorities are ordered correctly (1-10, no gaps)
 - [ ] Acceptance criteria are specific and verifiable
 - [ ] Stories build on each other logically
 - [ ] First story sets up foundations (schema, types, config)
 - [ ] Last story validates the complete feature
+- [ ] New code patterns match existing codebase conventions
 
-## After Creation (Post-Review)
+## After Creation
 
-Tell the user:
+After the reviewer approves, tell the user:
 
 ```
-PRD created at .omni/state/ralph/prds/<pending>/<name>/
+PRD created at .omni/state/ralph/prds/pending/<name>/
 
-To start Ralph orchestration:
-  omnidev ralph start <name>
-
-To check status:
-  omnidev ralph status <name>
+To start: omnidev ralph start <name>
+To check:  omnidev ralph status <name>
 ```

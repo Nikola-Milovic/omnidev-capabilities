@@ -125,6 +125,7 @@ Look at \`prd.json\` and find the next story to work on:
 
 Follow the spec requirements and the story's acceptance criteria:
 
+- **Before writing new code**, check how similar modules/capabilities are structured in the codebase (export patterns, manifest files, config conventions) and follow the same pattern exactly
 - Implement ONLY what's needed for this story
 - Follow patterns from progress.txt
 - Keep changes focused and minimal
@@ -262,6 +263,7 @@ npm run lint          # Fix lint issues
 
 ## Key Principles
 
+- **Match existing patterns** - Before writing new code, find how similar code is structured in the codebase and follow the same conventions exactly
 - **One story per iteration** - Never implement multiple stories at once
 - **Read the spec first** - The story title is just a summary
 - **Keep checks green** - Never commit failing tests or lint errors

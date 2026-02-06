@@ -6,7 +6,7 @@ aliases: [review, cleanup, audit, debt]
 
 # Code Review Skill
 
-Deep codebase analysis using parallel agents to find code quality issues and technical debt.
+Deep codebase analysis using parallel agents to find code quality issues and technical debt. **Default to production/enterprise-level scrutiny** — do not assume MVP scope unless the user explicitly says otherwise.
 
 ## What This Skill Finds
 

@@ -45,6 +45,9 @@ capabilities/ralph/
 - Progress.txt appends — never replaces existing content
 - Codebase patterns extracted from progress.txt "## Codebase Patterns" section
 - One story per iteration — enforced by getNextStory() priority sorting
+- Before writing new code, check how similar modules are structured and follow the same pattern (export patterns, manifest files, config conventions)
+- After creating or updating a PRD, run the prd-reviewer automatically — do not wait for the user to ask
+- All FR numbers, story IDs, and priority numbers must be sequential and unique — no duplicates after any renumbering
 
 **Agent Interaction:**
 - stdin/stdout piping to spawned agent processes
@@ -70,3 +73,5 @@ capabilities/ralph/
 - **NEVER** replace progress.txt content — always append
 - **NEVER** block story without adding questions to explain why
 - **NEVER** start a PRD with unmet dependencies (CLI enforces this)
+- **NEVER** introduce duplicate FR numbers, story IDs, or priority numbers after renumbering
+- **NEVER** create PRDs from scratch when existing spec/plan files are available — use them as foundation
