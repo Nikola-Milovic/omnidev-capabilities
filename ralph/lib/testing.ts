@@ -83,36 +83,39 @@ async function runScript(
  * Run health check with polling until ready or timeout
  * @param healthCheckPath - Path to health check script from config
  * @param timeoutSeconds - Timeout in seconds
+ * @returns Object with passed status and last failed output logs
  */
 async function waitForHealthCheck(
 	healthCheckPath: string | undefined,
 	timeoutSeconds: number,
-): Promise<boolean> {
+): Promise<{ passed: boolean; logs: string }> {
 	if (!healthCheckPath) {
 		console.log("No health check script configured, skipping health check");
-		return true;
+		return { passed: true, logs: "" };
 	}
 
 	const fullPath = join(process.cwd(), healthCheckPath);
 
 	if (!existsSync(fullPath)) {
 		console.log(`Health check script not found at ${healthCheckPath}, skipping health check`);
-		return true;
+		return { passed: true, logs: "" };
 	}
 
 	const startTime = Date.now();
 	const timeoutMs = timeoutSeconds * 1000;
 	const pollIntervalMs = 2000;
+	let lastFailedOutput = "";
 
 	console.log(`Waiting for health check (timeout: ${timeoutSeconds}s)...`);
 
 	while (Date.now() - startTime < timeoutMs) {
-		const { success } = await runScript(healthCheckPath, "health_check");
+		const { success, output } = await runScript(healthCheckPath, "health_check");
 		if (success) {
 			console.log("Health check passed!");
-			return true;
+			return { passed: true, logs: "" };
 		}
 
+		lastFailedOutput = output;
 		const elapsed = Math.round((Date.now() - startTime) / 1000);
 		process.stdout.write(`\rHealth check pending... ${elapsed}s / ${timeoutSeconds}s`);
 
@@ -120,7 +123,7 @@ async function waitForHealthCheck(
 	}
 
 	console.log("\nHealth check timed out!");
-	return false;
+	return { passed: false, logs: lastFailedOutput };
 }
 
 /**
@@ -130,17 +133,17 @@ function getPlaywriterInstructions(): string {
 	return `
 ## Web Testing with Playwriter MCP
 
-You have access to the Playwriter MCP for browser automation. Use it to test web UI.
+You have access to the Playwriter MCP for browser automation.
 
-### Session Setup (REQUIRED FIRST STEP)
+### Session Setup
 
-Before any web testing, create a session and your own page:
+Create a session and your own page before any web testing. Using \`state.myPage\` instead of the default \`page\` prevents interference if multiple agents share a session.
 
 \`\`\`bash
 # Create a new session (outputs session id, e.g., 1)
 playwriter session new
 
-# IMPORTANT: Create your own page to avoid interference from other agents
+# Create your own page to avoid interference from other agents
 playwriter -s 1 -e "state.myPage = await context.newPage()"
 
 # Navigate to the app (use URL from testing instructions)
@@ -182,7 +185,7 @@ Save screenshots to the test-results folder:
 # Screenshot on success
 playwriter -s 1 -e "await state.myPage.screenshot({ path: 'test-results/screenshots/success-001.png', scale: 'css' })"
 
-# Screenshot on failure (ALWAYS do this when something fails)
+# Screenshot on failure
 playwriter -s 1 -e "await state.myPage.screenshot({ path: 'test-results/screenshots/issue-001.png', scale: 'css' })"
 \`\`\`
 
@@ -209,10 +212,10 @@ playwriter session list
 playwriter session reset 1
 \`\`\`
 
-### Important Notes
+### Notes
 
-- ALWAYS use \`state.myPage\` instead of \`page\` to avoid conflicts
-- Take screenshots of ANY issues you find
+- Use \`state.myPage\` instead of \`page\` to avoid conflicts with other agents
+- Take screenshots of any issues you find
 - Save API responses to test-results/api-responses/
 - Clean up: \`playwriter -s 1 -e "await state.myPage.close()"\` when done
 `;
@@ -266,23 +269,125 @@ export async function generateTestPrompt(prdName: string, config: RalphConfig): 
 	// Get test results directory path
 	const testResultsDir = getTestResultsDir(prdName) || "test-results";
 
-	return `# Testing Task: ${prd.name}
+	return `<Role>
+QA engineer for the ${prd.name} feature. Your job is to verify the feature works correctly and probe for failures — invalid inputs, edge cases, error handling, and boundary conditions. A feature that passes the happy path but crashes on edge cases is not ready.
+</Role>
 
-You are a senior QA engineer. Your job is not just to verify the feature works - it's to **try to break it**.
+<Context>
 
-Think like an adversary. Find edge cases, test boundaries, try unexpected inputs, and verify error handling. A feature that "works" but crashes on edge cases is not ready for production.
+### PRD
+\`\`\`json
+${prdJson.slice(0, 3000)}${prdJson.length > 3000 ? "\n...(truncated)" : ""}
+\`\`\`
 
-## Your QA Mindset
+### Specification
+\`\`\`markdown
+${specContent.slice(0, 5000)}${specContent.length > 5000 ? "\n...(truncated)" : ""}
+\`\`\`
 
-1. **Don't just test the happy path** - Test what happens when things go wrong
-2. **Try to break it** - Invalid inputs, empty values, special characters, huge data
-3. **Check error handling** - Are errors graceful? Do they expose sensitive info?
-4. **Verify edge cases** - Boundaries, limits, concurrent access, race conditions
-5. **Think like a malicious user** - What if someone intentionally misuses this?
+### Verification Checklist
+\`\`\`markdown
+${verificationContent}
+\`\`\`
 
-## CRITICAL: Test Result Signals
+### Progress Log (Implementation Details)
+\`\`\`
+${progressContent.slice(0, 5000)}${progressContent.length > 5000 ? "\n...(truncated)" : ""}
+\`\`\`
 
-At the end of your testing, you MUST output one of these signals:
+### Project Verification Instructions
+${projectInstructions}
+
+${testingInstructions ? `### Testing Instructions\n${testingInstructions}\n` : ""}
+
+### Test Results Directory
+Save all evidence to: \`${testResultsDir}/\`
+- Screenshots: \`${testResultsDir}/screenshots/\`
+- API responses: \`${testResultsDir}/api-responses/\`
+
+### File Paths
+- PRD: .omni/state/ralph/prds/${status}/${prdName}/prd.json
+- Spec: .omni/state/ralph/prds/${status}/${prdName}/spec.md
+- Progress: .omni/state/ralph/prds/${status}/${prdName}/progress.txt (append testing session here)
+- Verification: .omni/state/ralph/prds/${status}/${prdName}/verification.md (update checkboxes here)
+- Test Results: .omni/state/ralph/prds/${status}/${prdName}/test-results/
+
+</Context>
+
+${playwriterSection}
+
+<Investigation_Protocol>
+
+### 1. Start a testing session in progress.txt
+
+Append a new entry:
+\`\`\`markdown
+---
+
+## [Testing Session] ${new Date().toISOString().split("T")[0]}
+
+**Quality Checks:**
+(lint, typecheck, tests results)
+
+**Verification Checklist:**
+(update as you test each item)
+
+**Edge Case Testing:**
+(document what you tried and results)
+
+**Issues Found:**
+(document any failures here)
+
+---
+\`\`\`
+
+### 2. Run project quality checks first
+
+Lint, typecheck, tests, formatting. If any fail, document and report PRD_FAILED.
+
+### 3. Verify the happy path
+
+Go through the verification checklist systematically:
+- Test each item
+- Update verification.md — change \`[ ]\` to \`[x]\` for passing items
+- Take screenshots of failures
+- Save API responses
+
+### 4. Probe for failures (edge cases)
+
+For each feature, test these categories as applicable:
+
+**Input edge cases:** empty strings, null, whitespace-only, boundary values (0, -1, MAX_INT), very long strings, special characters (\`<script>\`, SQL injection strings), wrong types
+
+**API edge cases:** missing required fields (omit one at a time), extra unexpected fields, wrong HTTP methods, malformed JSON, large payloads
+
+**UI edge cases (if applicable):** double-click submission, navigation during submit, back button after submit, refresh during operations, empty states, loading states
+
+**Error handling:** network failure, timeouts, 500 errors, 404s, validation error messages
+
+**Security:** unauthenticated access to protected resources, cross-user data access, sensitive data in responses/logs
+
+### 5. Update verification.md with final results
+
+Mark all tested items: \`[x]\` for pass, \`[ ]\` for fail with notes explaining why.
+
+### 6. Document findings in progress.txt
+
+Complete the testing session entry. Be specific: what input caused what failure.
+
+### 7. Output final signal
+
+PRD_VERIFIED only if both happy path and edge cases pass.
+
+</Investigation_Protocol>
+
+<Output_Format>
+
+These signals determine PRD state transitions:
+- PRD_VERIFIED → PRD moves to completed
+- PRD_FAILED → fix story created, PRD moves back to in_progress
+
+Create a detailed report, then output your signal:
 
 **If ALL tests pass:**
 \`\`\`
@@ -298,184 +403,7 @@ At the end of your testing, you MUST output one of these signals:
 </issues>
 \`\`\`
 
-These signals determine what happens next:
-- PRD_VERIFIED → PRD moves to completed automatically
-- PRD_FAILED → Fix story created, PRD moves back to in_progress
-
-## Project Verification Instructions
-
-**IMPORTANT:** ${projectInstructions}
-
-Run these checks FIRST before any other testing.
-
-${
-	testingInstructions
-		? `## Testing Instructions
-
-${testingInstructions}
-`
-		: ""
-}
-## Test Results Directory
-
-Save all evidence to: \`${testResultsDir}/\`
-- Screenshots: \`${testResultsDir}/screenshots/\`
-- API responses: \`${testResultsDir}/api-responses/\`
-
-${playwriterSection}
-
-## API Testing
-
-Test API endpoints directly with curl:
-
-\`\`\`bash
-# GET request
-curl -s http://localhost:3000/api/endpoint | tee ${testResultsDir}/api-responses/endpoint-get.json
-
-# POST request
-curl -s -X POST -H "Content-Type: application/json" -d '{"key":"value"}' http://localhost:3000/api/endpoint | tee ${testResultsDir}/api-responses/endpoint-post.json
-\`\`\`
-
-## QA Testing Patterns - TRY TO BREAK IT
-
-### Input Validation (try these for ALL user inputs)
-- **Empty values**: \`""\`, \`null\`, \`undefined\`, whitespace only \`"   "\`
-- **Boundary values**: 0, -1, MAX_INT, very long strings (10000+ chars)
-- **Special characters**: \`<script>alert('xss')</script>\`, \`'; DROP TABLE users;--\`
-- **Unicode/emoji**: \`日本語\`, \`🎉\`, \`\u0000\` (null byte)
-- **Wrong types**: string where number expected, array where object expected
-
-### API Edge Cases
-- **Missing required fields**: Omit each required field one at a time
-- **Extra fields**: Send unexpected fields - are they ignored or cause errors?
-- **Wrong HTTP methods**: GET when POST expected, etc.
-- **Invalid JSON**: Malformed JSON body
-- **Large payloads**: Very large request bodies
-- **Rate limiting**: Rapid repeated requests
-- **Auth edge cases**: Expired tokens, invalid tokens, missing auth
-
-### UI/Form Testing
-- **Double submission**: Click submit twice rapidly
-- **Navigation during submit**: Navigate away while form is submitting
-- **Back button**: Submit, go back, submit again - duplicate data?
-- **Refresh**: Refresh page during/after operations
-- **Empty states**: What shows when there's no data?
-- **Loading states**: Is there feedback during async operations?
-- **Error display**: Are error messages helpful and non-technical?
-
-### State & Data
-- **Concurrent access**: Same resource modified by two users
-- **Stale data**: What if data changed since page load?
-- **Cache issues**: Does old data persist incorrectly?
-- **Pagination boundaries**: First page, last page, page beyond data
-- **Sort edge cases**: Sort with ties, sort empty list
-- **Filter edge cases**: Filter that matches nothing, filter with special chars
-
-### Error Handling Verification
-- **Network failure**: What happens if API call fails?
-- **Timeout**: What happens on slow response?
-- **500 errors**: Does the app handle server errors gracefully?
-- **404 errors**: Missing resources handled properly?
-- **Validation errors**: Are they specific and actionable?
-
-### Security Considerations
-- **Auth required**: Can unauthenticated users access protected resources?
-- **Authorization**: Can user A access user B's data?
-- **Sensitive data exposure**: Are passwords, tokens, PII exposed in responses/logs?
-- **Error messages**: Do errors reveal system internals?
-
-## PRD (Product Requirements Document)
-
-\`\`\`json
-${prdJson.slice(0, 3000)}${prdJson.length > 3000 ? "\n...(truncated)" : ""}
-\`\`\`
-
-## Specification
-
-\`\`\`markdown
-${specContent.slice(0, 5000)}${specContent.length > 5000 ? "\n...(truncated)" : ""}
-\`\`\`
-
-## Verification Checklist
-
-This is what you need to verify:
-
-\`\`\`markdown
-${verificationContent}
-\`\`\`
-
-## Progress Log (Implementation Details)
-
-\`\`\`
-${progressContent.slice(0, 5000)}${progressContent.length > 5000 ? "\n...(truncated)" : ""}
-\`\`\`
-
-## Testing Process
-
-1. **Start a testing session in progress.txt**
-
-   Append a new testing session entry to progress.txt:
-   \`\`\`markdown
-   ---
-
-   ## [Testing Session] ${new Date().toISOString().split("T")[0]}
-
-   **Quality Checks:**
-   (lint, typecheck, tests results)
-
-   **Verification Checklist:**
-   (update as you test each item)
-
-   **Edge Case Testing:**
-   (document what you tried to break and results)
-
-   **Issues Found:**
-   (document any failures here)
-
-   ---
-   \`\`\`
-
-2. **Run project quality checks first**
-   - Lint, typecheck, tests, formatting
-   - Update progress.txt with results
-   - If any fail, document and report PRD_FAILED
-
-3. **Go through verification checklist (happy path)**
-   - Test each item systematically
-   - **Update verification.md** - change \`[ ]\` to \`[x]\` for passing items
-   - Take screenshots of failures
-   - Save API responses
-
-4. **TRY TO BREAK IT (edge cases)**
-   - For each feature, apply the QA Testing Patterns above
-   - Try invalid inputs, empty values, special characters
-   - Test error handling and edge cases
-   - Document everything you try in progress.txt
-   - Screenshot any crashes or unexpected behavior
-
-5. **For web testing (if applicable)**
-   - Create Playwriter session
-   - Use state.myPage for isolation
-   - Test the happy path first
-   - Then try to break the UI: double-clicks, rapid navigation, back button, refresh
-
-6. **Update verification.md with final results**
-   - Mark all tested items: \`[x]\` for pass, \`[ ]\` for fail
-   - Add notes next to failed items explaining why
-   - Add any new edge case issues you discovered
-
-7. **Document findings in progress.txt**
-   - Complete the testing session entry
-   - List ALL issues found (including edge cases)
-   - Be specific: what input caused what failure
-
-8. **Output final signal**
-   - PRD_VERIFIED only if BOTH happy path AND edge cases pass
-   - PRD_FAILED with issues list if anything is broken
-
-## Output Format
-
-Create a detailed report, then output your signal:
+### Example report
 
 \`\`\`markdown
 # Test Report: ${prd.name}
@@ -500,32 +428,25 @@ Create a detailed report, then output your signal:
 - Failed: 2
 \`\`\`
 
-Then:
+</Output_Format>
 
-\`\`\`
-<test-result>PRD_FAILED</test-result>
-<issues>
-- Tests failing in auth.test.ts
-- User profile shows wrong email
-</issues>
-\`\`\`
+<Circuit_Breaker>
+If quality checks fail 3 times in a row, stop retrying and report PRD_FAILED with a summary of what's failing and why, rather than looping indefinitely.
+</Circuit_Breaker>
 
-## File Paths
+<Failure_Modes_To_Avoid>
+- **Happy-path-only testing** — verifying the feature "works" without probing edge cases misses the bugs users will hit
+- **Untraceable results** — always update progress.txt and verification.md so the next developer (or fix agent) knows what was tested
+- **Missing signal** — the orchestrator needs the \`<test-result>\` signal to proceed; omitting it requires manual intervention
+</Failure_Modes_To_Avoid>
 
-PRD files are located at:
-- PRD: .omni/state/ralph/prds/${status}/${prdName}/prd.json
-- Spec: .omni/state/ralph/prds/${status}/${prdName}/spec.md
-- Progress: .omni/state/ralph/prds/${status}/${prdName}/progress.txt (append testing session here)
-- Verification: .omni/state/ralph/prds/${status}/${prdName}/verification.md (update checkboxes here)
-- Test Results: .omni/state/ralph/prds/${status}/${prdName}/test-results/
+<Examples>
 
-## Important
+**Good test session:** Runs quality checks first, goes through verification checklist item by item, tries invalid inputs on each form field, tests API with missing fields, documents every test in progress.txt, screenshots failures, outputs clear signal with specific issue list.
 
-- **Always update progress.txt** with your testing session - this creates a history
-- **Always update verification.md** to reflect actual test results - mark items [x] or [ ]
-- The next developer (or fix story agent) will read these to understand what was tested
+**Bad test session:** Runs the app once, confirms it loads, outputs PRD_VERIFIED without testing edge cases or updating verification.md.
 
-Begin testing now. Be thorough and always output your final signal.
+</Examples>
 `;
 }
 
@@ -540,6 +461,95 @@ export function detectTestResult(output: string): "verified" | "failed" | null {
 		return "failed";
 	}
 	return null;
+}
+
+/**
+ * Detect healthcheck fix result signal from agent output
+ */
+export function detectHealthCheckResult(output: string): "fixed" | "not_fixable" | null {
+	if (output.includes("<healthcheck-result>FIXED</healthcheck-result>")) {
+		return "fixed";
+	}
+	if (output.includes("<healthcheck-result>NOT_FIXABLE</healthcheck-result>")) {
+		return "not_fixable";
+	}
+	return null;
+}
+
+/**
+ * Generate prompt for healthcheck fix agent
+ */
+function generateHealthCheckFixPrompt(
+	healthCheckLogs: string,
+	config: RalphConfig,
+	attempt: number,
+	maxAttempts: number,
+): string {
+	const projectInstructions =
+		config.testing?.project_verification_instructions ||
+		"Run project quality checks (lint, typecheck, tests) to ensure code quality.";
+	const testingInstructions = config.testing?.instructions || "";
+	const scripts = config.scripts;
+
+	return `<Role>
+Healthcheck fix agent. Diagnose and fix the failing healthcheck so the application can proceed to testing.
+This is attempt ${attempt} of ${maxAttempts}.
+</Role>
+
+<Context>
+
+### Healthcheck Script Output
+
+\`\`\`
+${healthCheckLogs || "(no output captured)"}
+\`\`\`
+
+### Project Context
+
+**Verification instructions:** ${projectInstructions}
+
+${testingInstructions ? `**Testing instructions:** ${testingInstructions}\n` : ""}
+
+### Script Paths
+
+${scripts?.setup ? `- Setup: ${scripts.setup}` : ""}
+${scripts?.start ? `- Start: ${scripts.start}` : ""}
+${scripts?.health_check ? `- Health check: ${scripts.health_check}` : ""}
+${scripts?.teardown ? `- Teardown: ${scripts.teardown}` : ""}
+
+</Context>
+
+<Investigation_Protocol>
+1. Read the healthcheck script to understand what it checks
+2. Investigate why the check is failing based on the output above
+3. Fix the underlying issue (code, config, dependencies, etc.)
+</Investigation_Protocol>
+
+<Constraints>
+- Do not modify the healthcheck script itself unless it is clearly broken. The healthcheck is the source of truth for application readiness — changing it to make it pass defeats its purpose.
+</Constraints>
+
+<Failure_Modes_To_Avoid>
+- **Modifying the healthcheck script** to make it pass instead of fixing the actual problem
+- **Cargo-culting fixes** without diagnosing the root cause (e.g., restarting services without understanding why they failed)
+</Failure_Modes_To_Avoid>
+
+<Output_Format>
+
+When done, output exactly one of these signals. The orchestrator parses these to decide whether to retry or proceed to testing.
+
+**If you fixed the issue:**
+\`\`\`
+<healthcheck-result>FIXED</healthcheck-result>
+\`\`\`
+
+**If the issue cannot be fixed (infrastructure, external dependency, etc.):**
+\`\`\`
+<healthcheck-result>NOT_FIXABLE</healthcheck-result>
+\`\`\`
+
+</Output_Format>
+`;
 }
 
 /**
@@ -721,7 +731,6 @@ async function generateRetestPrompt(
 	previousFailures: string[],
 	config: RalphConfig,
 ): Promise<string> {
-	const prd = await getPRD(prdName);
 	const status = findPRDLocation(prdName);
 	const testResultsDir = getTestResultsDir(prdName) || "test-results";
 
@@ -733,30 +742,21 @@ async function generateRetestPrompt(
 	// Testing instructions (URLs, credentials, context)
 	const testingInstructions = config.testing?.instructions || "";
 
-	return `# Retest Task: ${prd.name}
+	return `<Role>
+Retest agent. Verify that previously failed tests have been fixed.
+</Role>
 
-You are verifying that previously failed tests have been fixed.
+<Scope>
+This is a focused retest, not a full test run. Verify only the ${previousFailures.length} item(s) that previously failed. Re-running the entire suite wastes time on items that already passed.
+</Scope>
 
-## CRITICAL: This is a FOCUSED RETEST
-
-A previous test run found failures. Your job is to verify ONLY the items that previously failed.
-Do NOT re-run the entire test suite - focus on the specific failures listed below.
-
-## Previous Failures to Verify
+<Previous_Failures>
 
 ${previousFailures.map((f, i) => `${i + 1}. ${f}`).join("\n")}
 
-## Project Verification Instructions
+</Previous_Failures>
 
-${projectInstructions}
-
-${testingInstructions ? `## Testing Instructions\n\n${testingInstructions}\n` : ""}
-
-## Test Results Directory
-
-Save evidence to: \`${testResultsDir}/\`
-
-## Your Task
+<Investigation_Protocol>
 
 1. For each previously failed item above:
    - Verify if it has been fixed
@@ -765,7 +765,17 @@ Save evidence to: \`${testResultsDir}/\`
 
 2. Run project quality checks (lint, typecheck, tests) to ensure fixes didn't break anything
 
-3. Output your result:
+**Project verification instructions:** ${projectInstructions}
+
+${testingInstructions ? `**Testing instructions:** ${testingInstructions}\n` : ""}
+
+**Test results directory:** \`${testResultsDir}/\`
+
+</Investigation_Protocol>
+
+<Output_Format>
+
+These signals determine PRD state transitions. The orchestrator parses them to decide whether to complete or loop back for fixes.
 
 **If ALL previously failed items are now fixed:**
 \`\`\`
@@ -781,15 +791,14 @@ Save evidence to: \`${testResultsDir}/\`
 </issues>
 \`\`\`
 
-## File Paths
+</Output_Format>
 
-PRD files are located at:
+<File_Paths>
 - PRD: .omni/state/ralph/prds/${status}/${prdName}/prd.json
 - Progress: .omni/state/ralph/prds/${status}/${prdName}/progress.txt
 - Verification: .omni/state/ralph/prds/${status}/${prdName}/verification.md
 - Test Results: .omni/state/ralph/prds/${status}/${prdName}/test-results/
-
-Begin focused retest now. Only verify the ${previousFailures.length} previously failed item(s).
+</File_Paths>
 `;
 }
 
@@ -868,39 +877,79 @@ export async function runTesting(
 
 	// Get script paths from config
 	const scripts = config.scripts;
+	const healthCheckTimeout = config.testing?.health_check_timeout ?? 30;
+	const maxHealthFixAttempts = config.testing?.max_health_fix_attempts ?? 3;
 
-	// Run teardown first to ensure clean state
-	console.log("Running teardown script (ensuring clean state)...");
-	const preTeardownResult = await runScript(scripts?.teardown, "teardown", prdName);
-	if (preTeardownResult.output && !preTeardownResult.output.includes("not configured")) {
-		console.log(preTeardownResult.output);
-	}
+	// Healthcheck fix loop: teardown → setup → start → healthcheck, retry with fix agent on failure
+	for (let attempt = 1; attempt <= maxHealthFixAttempts; attempt++) {
+		// Run teardown first to ensure clean state
+		console.log(
+			`\n${attempt > 1 ? `[Attempt ${attempt}/${maxHealthFixAttempts}] ` : ""}Running teardown script (ensuring clean state)...`,
+		);
+		const preTeardownResult = await runScript(scripts?.teardown, "teardown", prdName);
+		if (preTeardownResult.output && !preTeardownResult.output.includes("not configured")) {
+			console.log(preTeardownResult.output);
+		}
 
-	// Run setup script
-	console.log("Running setup script...");
-	const setupResult = await runScript(scripts?.setup, "setup", prdName);
-	if (!setupResult.success) {
-		console.log(`Setup script failed: ${setupResult.output}`);
-		// Continue anyway - setup might be optional
-	} else {
-		console.log(setupResult.output);
-	}
+		// Run setup script
+		console.log("Running setup script...");
+		const setupResult = await runScript(scripts?.setup, "setup", prdName);
+		if (!setupResult.success) {
+			console.log(`Setup script failed: ${setupResult.output}`);
+		} else {
+			console.log(setupResult.output);
+		}
 
-	// Run start script
-	console.log("Running start script...");
-	const startResult = await runScript(scripts?.start, "start", prdName);
-	if (!startResult.success) {
-		console.log(`Start script failed or not configured: ${startResult.output}`);
-		// Continue anyway - might not need server start
-	} else {
-		console.log(startResult.output);
-	}
+		// Run start script
+		console.log("Running start script...");
+		const startResult = await runScript(scripts?.start, "start", prdName);
+		if (!startResult.success) {
+			console.log(`Start script failed or not configured: ${startResult.output}`);
+		} else {
+			console.log(startResult.output);
+		}
 
-	// Wait for health check
-	const healthCheckTimeout = config.testing?.health_check_timeout ?? 120;
-	const healthCheckPassed = await waitForHealthCheck(scripts?.health_check, healthCheckTimeout);
-	if (!healthCheckPassed) {
-		console.log("\n⚠️  Health check failed - continuing anyway, tests may fail");
+		// Wait for health check
+		const healthResult = await waitForHealthCheck(scripts?.health_check, healthCheckTimeout);
+		if (healthResult.passed) {
+			break;
+		}
+
+		// Health check failed
+		if (attempt >= maxHealthFixAttempts) {
+			console.log(
+				`\n⚠️  Health check failed after ${maxHealthFixAttempts} attempt(s) - continuing anyway, tests may fail`,
+			);
+			break;
+		}
+
+		// Spawn fix agent
+		console.log(
+			`\n🔧 Health check failed — spawning fix agent (attempt ${attempt}/${maxHealthFixAttempts})...`,
+		);
+		const fixPrompt = generateHealthCheckFixPrompt(
+			healthResult.logs,
+			config,
+			attempt,
+			maxHealthFixAttempts,
+		);
+		const { output: fixOutput } = await runAgent(fixPrompt, agentConfig, { stream: true });
+
+		const fixResult = detectHealthCheckResult(fixOutput);
+		if (fixResult === "fixed") {
+			console.log("\n✅ Fix agent reports FIXED — retrying lifecycle...");
+			continue;
+		}
+
+		// NOT_FIXABLE or no signal
+		if (fixResult === "not_fixable") {
+			console.log("\n⚠️  Fix agent reports NOT_FIXABLE — continuing anyway, tests may fail");
+		} else {
+			console.log(
+				"\n⚠️  Fix agent did not output a clear signal — continuing anyway, tests may fail",
+			);
+		}
+		break;
 	}
 
 	// Generate test prompt (focused or full)

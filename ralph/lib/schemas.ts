@@ -83,6 +83,7 @@ export const TestingConfigSchema = z.object({
 	web_testing_enabled: z.boolean().optional(),
 	instructions: z.string().optional(),
 	health_check_timeout: z.number().int().min(1).optional(),
+	max_health_fix_attempts: z.number().int().min(1).max(10).optional(),
 });
 
 /**

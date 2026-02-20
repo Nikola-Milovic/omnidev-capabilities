@@ -9,7 +9,13 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { parse } from "smol-toml";
 import { validateRalphConfig } from "../schemas.js";
-import type { RalphConfig, AgentConfig, TestingConfig, ScriptsConfig, DocsConfig } from "../types.js";
+import type {
+	RalphConfig,
+	AgentConfig,
+	TestingConfig,
+	ScriptsConfig,
+	DocsConfig,
+} from "../types.js";
 import { type Result, ok, err, ErrorCodes } from "../results.js";
 
 const CONFIG_PATH = "omni.toml";
@@ -39,6 +45,7 @@ interface RawTestingConfig {
 	web_testing_enabled?: boolean;
 	instructions?: string;
 	health_check_timeout?: number;
+	max_health_fix_attempts?: number;
 }
 
 interface RawScriptsConfig {
@@ -101,6 +108,9 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 		}
 		if (ralph.testing.health_check_timeout !== undefined) {
 			testing.health_check_timeout = ralph.testing.health_check_timeout;
+		}
+		if (ralph.testing.max_health_fix_attempts !== undefined) {
+			testing.max_health_fix_attempts = ralph.testing.max_health_fix_attempts;
 		}
 		config.testing = testing;
 	}
@@ -207,10 +217,11 @@ export function hasAgent(config: RalphConfig, agentName: string): boolean {
 export function getTestingConfig(config: RalphConfig): TestingConfig {
 	return {
 		test_iterations: config.testing?.test_iterations ?? config.default_iterations,
-		health_check_timeout: config.testing?.health_check_timeout ?? 120,
+		health_check_timeout: config.testing?.health_check_timeout ?? 30,
 		web_testing_enabled: config.testing?.web_testing_enabled ?? false,
 		project_verification_instructions: config.testing?.project_verification_instructions,
 		instructions: config.testing?.instructions,
+		max_health_fix_attempts: config.testing?.max_health_fix_attempts ?? 3,
 	};
 }
 

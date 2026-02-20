@@ -114,8 +114,10 @@ export interface TestingConfig {
 	web_testing_enabled?: boolean;
 	/** Free-form instructions for testing (URLs, credentials, context, etc.) */
 	instructions?: string;
-	/** Health check timeout in seconds (default: 120) */
+	/** Health check timeout in seconds (default: 30) */
 	health_check_timeout?: number;
+	/** Max healthcheck fix agent attempts (default: 3) */
+	max_health_fix_attempts?: number;
 }
 
 /**

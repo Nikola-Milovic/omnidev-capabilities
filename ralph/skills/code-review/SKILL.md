@@ -6,7 +6,19 @@ aliases: [review, cleanup, audit, debt]
 
 # Code Review Skill
 
-Deep codebase analysis using parallel agents to find code quality issues and technical debt. **Default to production/enterprise-level scrutiny** — do not assume MVP scope unless the user explicitly says otherwise.
+Deep codebase analysis using parallel agents to find code quality issues and technical debt.
+
+<Use_When>
+- User wants a comprehensive code quality audit
+- Before a major release or milestone
+- When technical debt needs to be catalogued
+- User says `/code-review`, `/review`, `/cleanup`, `/audit`, or `/debt`
+</Use_When>
+
+<Do_Not_Use_When>
+- User wants to review a specific PR or diff (use the code-reviewer subagent directly)
+- User wants to fix a specific bug (use the architect subagent for diagnosis)
+</Do_Not_Use_When>
 
 ## What This Skill Finds
 
@@ -20,9 +32,18 @@ Deep codebase analysis using parallel agents to find code quality issues and tec
 | **Performance Issues** | N+1 queries, missing indexes, unnecessary re-renders |
 | **Security Concerns** | Exposed secrets, SQL injection risks, XSS vulnerabilities |
 
-## Execution Strategy
+<Execution_Policy>
 
-**YOU ARE AN ORCHESTRATOR. Use subagents for all analysis.**
+You are an orchestrator. Delegate all analysis to subagents and synthesize their results into a prioritized report.
+
+This delegation strategy exists because:
+- Parallel agents cover more ground faster than sequential analysis
+- Each agent focuses on one concern, reducing missed issues
+- You focus on synthesis and prioritization, which requires seeing all findings together
+
+</Execution_Policy>
+
+## Execution Strategy
 
 ### Phase 1: Discovery (Parallel Exploration)
 
@@ -59,7 +80,7 @@ Task(subagent_type="Explore", model="sonnet", prompt="Find inconsistent patterns
 
 ### Phase 3: Deep Review (Targeted)
 
-For areas identified as problematic, use architect for deeper analysis:
+For areas identified as problematic, use deeper analysis:
 
 ```
 Task(subagent_type="general-purpose", model="sonnet", prompt="Review [specific file/module] for: error handling gaps, missing edge cases, potential race conditions, and security issues.")
@@ -148,17 +169,13 @@ When invoking, you can specify scope:
 | Security review | `general-purpose` | sonnet |
 | Architecture review | `general-purpose` | opus |
 
-## Example Invocation
+<Examples>
 
-User: `/code-review`
+**Good review orchestration**: Launches 6+ explore agents in parallel for Phase 1, waits for all results, identifies the 3 most problematic areas, launches targeted Phase 2 agents for those areas, synthesizes a prioritized report with specific file:line references and actionable fixes.
 
-1. **Read OMNI.md** for project context
-2. **Scan codebase structure** to understand scope
-3. **Launch Phase 1 agents** in parallel (6+ agents)
-4. **Collect results** as agents complete
-5. **Launch Phase 2 agents** based on findings
-6. **Synthesize report** with prioritized findings
-7. **Present to user** with recommended actions
+**Bad review orchestration**: Launches one agent at a time sequentially, reports raw agent output without synthesis, doesn't prioritize findings, lists issues without file locations or suggested fixes.
+
+</Examples>
 
 ## Follow-up Actions
 

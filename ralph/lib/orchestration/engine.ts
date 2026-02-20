@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import type { PRD, AgentConfig, TestReport } from "../types.js";
+import type { PRD, AgentConfig, TestReport, RalphConfig } from "../types.js";
 import type { Result } from "../results.js";
 import { ok, err, ErrorCodes } from "../results.js";
 import { type PRDStore, getDefaultStore } from "../core/prd-store.js";
@@ -19,6 +19,7 @@ import { generatePrompt } from "../prompt.js";
 import {
 	generateTestPrompt,
 	detectTestResult,
+	detectHealthCheckResult,
 	extractIssues,
 	parseTestReport,
 	saveTestReport,
@@ -451,26 +452,82 @@ export class OrchestrationEngine {
 		// Run scripts
 		const scripts = getScriptsConfig(config);
 		const testingConfig = getTestingConfig(config);
+		const healthTimeout = testingConfig.health_check_timeout ?? 30;
+		const maxHealthFixAttempts = testingConfig.max_health_fix_attempts ?? 3;
 
-		// Teardown first (clean state)
-		log("info", "Running teardown...");
-		await this.runScript(scripts.teardown, "teardown", prdName);
+		// Healthcheck fix loop: teardown → setup → start → healthcheck, retry with fix agent on failure
+		for (let attempt = 1; attempt <= maxHealthFixAttempts; attempt++) {
+			// Teardown first (clean state)
+			log(
+				"info",
+				`${attempt > 1 ? `[Attempt ${attempt}/${maxHealthFixAttempts}] ` : ""}Running teardown...`,
+			);
+			await this.runScript(scripts.teardown, "teardown", prdName);
 
-		// Setup
-		log("info", "Running setup...");
-		await this.runScript(scripts.setup, "setup", prdName);
+			// Setup
+			log("info", "Running setup...");
+			await this.runScript(scripts.setup, "setup", prdName);
 
-		// Start
-		log("info", "Running start...");
-		await this.runScript(scripts.start, "start", prdName);
+			// Start
+			log("info", "Running start...");
+			await this.runScript(scripts.start, "start", prdName);
 
-		// Health check
-		const timeout = testingConfig.health_check_timeout ?? 120;
-		const healthPassed = await this.waitForHealthCheck(scripts.health_check, timeout, emit, signal);
+			// Health check
+			const healthResult = await this.waitForHealthCheck(
+				scripts.health_check,
+				healthTimeout,
+				emit,
+				signal,
+			);
+			if (healthResult.passed) {
+				break;
+			}
 
-		if (!healthPassed) {
-			emit({ type: "health_check_failed", error: `Health check timed out after ${timeout}s` });
-			log("warn", "Health check failed, continuing anyway");
+			// Health check failed
+			if (attempt >= maxHealthFixAttempts) {
+				emit({
+					type: "health_check_failed",
+					error: `Health check failed after ${maxHealthFixAttempts} attempt(s)`,
+				});
+				log(
+					"warn",
+					`Health check failed after ${maxHealthFixAttempts} attempt(s), continuing anyway`,
+				);
+				break;
+			}
+
+			// Spawn fix agent
+			log(
+				"info",
+				`Health check failed — spawning fix agent (attempt ${attempt}/${maxHealthFixAttempts})`,
+			);
+			const fixPrompt = this.generateHealthCheckFixPrompt(
+				healthResult.logs,
+				config,
+				attempt,
+				maxHealthFixAttempts,
+			);
+			const fixResult = await this.ctx.runner.run(fixPrompt, agentConfig, {
+				stream: true,
+				signal,
+				onOutput: (data) => emit({ type: "agent_output", data }),
+			});
+
+			const fixSignal = detectHealthCheckResult(fixResult.output);
+			if (fixSignal === "fixed") {
+				log("info", "Fix agent reports FIXED — retrying lifecycle...");
+				continue;
+			}
+
+			// NOT_FIXABLE or no signal
+			if (fixSignal === "not_fixable") {
+				emit({ type: "health_check_failed", error: "Fix agent reports NOT_FIXABLE" });
+				log("warn", "Fix agent reports NOT_FIXABLE — continuing anyway");
+			} else {
+				emit({ type: "health_check_failed", error: "Fix agent did not output a clear signal" });
+				log("warn", "Fix agent did not output a clear signal — continuing anyway");
+			}
+			break;
 		}
 
 		// Generate prompt and run
@@ -590,34 +647,101 @@ export class OrchestrationEngine {
 		timeout: number,
 		emit: (event: EngineEvent) => void,
 		signal?: AbortSignal,
-	): Promise<boolean> {
+	): Promise<{ passed: boolean; logs: string }> {
 		if (!scriptPath) {
-			return true;
+			return { passed: true, logs: "" };
 		}
 
 		emit({ type: "health_check_start", timeout });
 
 		const startTime = Date.now();
 		const timeoutMs = timeout * 1000;
+		let lastFailedOutput = "";
 
 		while (Date.now() - startTime < timeoutMs) {
 			if (signal?.aborted) {
-				return false;
+				return { passed: false, logs: lastFailedOutput };
 			}
 
-			const { success } = await this.runScript(scriptPath, "health_check");
+			const { success, output } = await this.runScript(scriptPath, "health_check");
 			if (success) {
 				emit({ type: "health_check_passed" });
-				return true;
+				return { passed: true, logs: "" };
 			}
 
+			lastFailedOutput = output;
 			const elapsed = Math.round((Date.now() - startTime) / 1000);
 			emit({ type: "health_check_progress", elapsed, timeout });
 
 			await new Promise((resolve) => setTimeout(resolve, 2000));
 		}
 
-		return false;
+		return { passed: false, logs: lastFailedOutput };
+	}
+
+	/**
+	 * Generate prompt for healthcheck fix agent
+	 */
+	private generateHealthCheckFixPrompt(
+		healthCheckLogs: string,
+		config: RalphConfig,
+		attempt: number,
+		maxAttempts: number,
+	): string {
+		const projectInstructions =
+			config.testing?.project_verification_instructions ||
+			"Run project quality checks (lint, typecheck, tests) to ensure code quality.";
+		const testingInstructions = config.testing?.instructions || "";
+		const scripts = config.scripts;
+
+		return `# Healthcheck Fix Task (Attempt ${attempt}/${maxAttempts})
+
+The application healthcheck is failing. Your job is to diagnose and fix the issue so the healthcheck passes.
+
+## Healthcheck Script Output
+
+The healthcheck script failed with the following output:
+
+\`\`\`
+${healthCheckLogs || "(no output captured)"}
+\`\`\`
+
+## Project Context
+
+**Project Verification Instructions:** ${projectInstructions}
+
+${testingInstructions ? `**Testing Instructions:** ${testingInstructions}\n` : ""}
+
+## Script Paths
+
+${scripts?.setup ? `- Setup: ${scripts.setup}` : ""}
+${scripts?.start ? `- Start: ${scripts.start}` : ""}
+${scripts?.health_check ? `- Health check: ${scripts.health_check}` : ""}
+${scripts?.teardown ? `- Teardown: ${scripts.teardown}` : ""}
+
+## Instructions
+
+1. Read the healthcheck script to understand what it checks
+2. Investigate why the check is failing based on the output above
+3. Fix the underlying issue (code, config, dependencies, etc.)
+4. Do NOT modify the healthcheck script itself unless it is clearly broken
+
+## CRITICAL: Output Signal
+
+When done, you MUST output exactly one of these signals:
+
+**If you fixed the issue:**
+\`\`\`
+<healthcheck-result>FIXED</healthcheck-result>
+\`\`\`
+
+**If the issue cannot be fixed (infrastructure, external dependency, etc.):**
+\`\`\`
+<healthcheck-result>NOT_FIXABLE</healthcheck-result>
+\`\`\`
+
+Begin diagnosis now.
+`;
 	}
 }
 

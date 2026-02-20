@@ -7,21 +7,33 @@ description: "Generate a Product Requirements Document (PRD) for a new feature. 
 
 Create structured PRDs for Ralph orchestration to enable AI-driven development.
 
+<Use_When>
+- User wants to plan a new feature or project
+- User asks to create a PRD, write requirements, or spec out a feature
+- User says "plan this feature" or "requirements for"
+</Use_When>
+
+<Do_Not_Use_When>
+- User wants to modify an existing PRD (edit the files directly instead)
+- User wants to review a PRD (use the prd-reviewer subagent)
+- User wants to start implementation (use `omnidev ralph start`)
+</Do_Not_Use_When>
+
 ## The Job
 
 When a user requests a PRD:
 
 ### 1. Check for Existing Documents
 
-**Before starting from scratch**, check if the user has referenced or if there exist any related spec, plan, or requirements files:
+Before starting from scratch, check if the user has referenced or if there exist any related spec, plan, or requirements files:
 
 - Search for existing specs, plans, or requirement docs the user mentioned
 - Check `.omni/state/ralph/prds/` for related or prior PRDs on the same topic
-- If found, **use them as the foundation** and expand from there — do not duplicate or recreate work that already exists
+- If found, use them as the foundation and expand from there — recreating existing work wastes time and loses context
 
 ### 2. Research & Explore
 
-**Before interviewing**, gather context using specialized agents so you can ask informed questions:
+Before interviewing, gather context using specialized agents so you can ask informed questions:
 
 #### Use the `explore` agent to understand the codebase
 
@@ -37,19 +49,19 @@ When a user requests a PRD:
 - Common pitfalls and edge cases
 - Security considerations
 
-**This context helps you ask better questions** and identify constraints the user may not be aware of.
+This context helps you ask better questions and identify constraints the user may not be aware of.
 
 ### 3. Interview the User
 
-With codebase and domain knowledge in hand, conduct an **in-depth interview using the AskUserQuestion tool**.
+With codebase and domain knowledge in hand, conduct an in-depth interview using the AskUserQuestion tool.
 
 **Interview approach:**
 
-- Ask about **anything relevant**: technical implementation, UI/UX design, user flows, performance concerns, security implications, tradeoffs, edge cases, error handling, future extensibility, integration points, data modeling, state management, testing strategy, deployment considerations, etc.
-- **Avoid obvious questions** - use your research and codebase exploration to ask informed, specific questions that demonstrate understanding
-- **Continue interviewing in multiple rounds** until you have a complete picture - don't rush to finish
-- **Surface tradeoffs** you've identified and ask the user to choose between approaches
-- **Challenge assumptions** - if something seems unclear or potentially problematic, probe deeper
+- Ask about anything relevant: technical implementation, UI/UX design, user flows, performance concerns, security implications, tradeoffs, edge cases, error handling, future extensibility, integration points, data modeling, state management, testing strategy, deployment considerations, etc.
+- Avoid obvious questions — use your research and codebase exploration to ask informed, specific questions that demonstrate understanding
+- Continue interviewing in multiple rounds until you have a complete picture
+- Surface tradeoffs you've identified and ask the user to choose between approaches
+- Challenge assumptions — if something seems unclear or potentially problematic, probe deeper
 
 **Topics to explore (as relevant to the feature):**
 
@@ -62,7 +74,7 @@ With codebase and domain knowledge in hand, conduct an **in-depth interview usin
 - **Testing**: What needs to be tested, acceptance criteria, how to verify correctness
 - **Tradeoffs**: Speed vs. quality, simplicity vs. flexibility, consistency vs. innovation
 
-**Use the AskUserQuestion tool** to present options, gather preferences, and validate your understanding. Keep interviewing until you have enough detail to write a comprehensive spec that an implementer could follow without further clarification.
+Use the AskUserQuestion tool to present options, gather preferences, and validate your understanding. Keep interviewing until you have enough detail to write a comprehensive spec that an implementer could follow without further clarification.
 
 ### 4. Create the PRD Folder Structure
 
@@ -182,7 +194,7 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 - There's a logical order (e.g., database schema before API)
 - Multiple PRDs are planned and should run in sequence
 
-**Note:** `omnidev ralph start` will refuse to run a PRD with incomplete dependencies.
+`omnidev ralph start` will refuse to run a PRD with incomplete dependencies.
 
 ### 7. Create Empty Progress File
 
@@ -200,21 +212,21 @@ Started: [Date]
 
 ### 8. Run PRD Review (Automatic)
 
-**This step is mandatory.** After writing the PRD files, immediately run the `prd-reviewer` agent — do not wait for the user to ask.
+After writing the PRD files, immediately run the `prd-reviewer` agent. The reviewer catches structural and goal alignment issues that cause implementation failures — running it now prevents wasted iteration cycles later.
 
-The reviewer checks goal alignment and structural quality. It will return a verdict:
+The reviewer returns a verdict:
 
 - **READY TO PROCEED**: Inform the user the PRD is ready.
-- **NEEDS REVISION**: Fix critical issues, update spec.md and prd.json, then run the reviewer again. After any renumbering or restructuring, verify all FR numbers, story IDs, and priority numbers are sequential and unique — no duplicates. Repeat until approved.
+- **NEEDS REVISION**: Fix critical issues, update spec.md and prd.json, then run the reviewer again. After any renumbering or restructuring, verify all FR numbers, story IDs, and priority numbers are sequential and unique. Repeat until approved.
 
 ## Best Practices
 
 ### Story Breakdown
 
 - **5-10 stories** is typical for a feature
-- **Order by dependency** - foundational work first (priority 1-2)
-- **Scope appropriately** - each story completable in one iteration
-- **Verifiable criteria** - acceptance criteria must be testable
+- **Order by dependency** — foundational work first (priority 1-2)
+- **Scope appropriately** — each story completable in one iteration
+- **Verifiable criteria** — acceptance criteria must be testable
 
 ### Example Stories
 
@@ -249,22 +261,6 @@ The reviewer checks goal alignment and structural quality. It will return a verd
   "questions": []
 }
 ```
-
-## Quality Checks
-
-The `prd-reviewer` validates these automatically, but keep them in mind while writing:
-
-- [ ] User has confirmed understanding of requirements
-- [ ] Existing spec/plan files were used as foundation (if any existed)
-- [ ] spec.md describes the feature requirements clearly
-- [ ] All FR numbers in spec.md are sequential and unique (no duplicates)
-- [ ] All story IDs in prd.json are sequential and unique (no duplicates)
-- [ ] Priorities are ordered correctly (1-10, no gaps)
-- [ ] Acceptance criteria are specific and verifiable
-- [ ] Stories build on each other logically
-- [ ] First story sets up foundations (schema, types, config)
-- [ ] Last story validates the complete feature
-- [ ] New code patterns match existing codebase conventions
 
 ## After Creation
 

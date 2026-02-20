@@ -256,9 +256,7 @@ export async function runAgent(
 			//    generateVerification calling Claude Code without stream: true)
 			// 3. Last resort: raw stdout + stderr
 			const output =
-				(stream && streamCtx.plainText) ||
-				extractTextFromAgentJson(stdout) ||
-				stdout + stderr;
+				(stream && streamCtx.plainText) || extractTextFromAgentJson(stdout) || stdout + stderr;
 			resolve({ output, exitCode: code ?? 1 });
 		});
 
