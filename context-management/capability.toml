@@ -1,0 +1,6 @@
+[capability]
+id = "context-management"
+name = "Context Management"
+version = "0.1.0"
+description = "TODO: Add a description for your capability"
+
