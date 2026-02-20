@@ -105,6 +105,19 @@ export const DocsConfigSchema = z.object({
 });
 
 /**
+ * Review configuration schema
+ */
+export const ReviewConfigSchema = z.object({
+	enabled: z.boolean().optional(),
+	external_tool: z.string().optional(),
+	finalize_enabled: z.boolean().optional(),
+	finalize_prompt: z.string().optional(),
+	first_review_agents: z.array(z.string()).optional(),
+	second_review_agents: z.array(z.string()).optional(),
+	max_fix_iterations: z.number().int().min(1).max(10).optional(),
+});
+
+/**
  * Ralph configuration schema
  */
 export const RalphConfigSchema = z.object({
@@ -114,6 +127,7 @@ export const RalphConfigSchema = z.object({
 	testing: TestingConfigSchema.optional(),
 	scripts: ScriptsConfigSchema.optional(),
 	docs: DocsConfigSchema.optional(),
+	review: ReviewConfigSchema.optional(),
 });
 
 /**
@@ -196,6 +210,7 @@ export type AgentConfigZ = z.infer<typeof AgentConfigSchema>;
 export type TestingConfigZ = z.infer<typeof TestingConfigSchema>;
 export type ScriptsConfigZ = z.infer<typeof ScriptsConfigSchema>;
 export type DocsConfigZ = z.infer<typeof DocsConfigSchema>;
+export type ReviewConfigZ = z.infer<typeof ReviewConfigSchema>;
 export type RalphConfigZ = z.infer<typeof RalphConfigSchema>;
 export type TestResultZ = z.infer<typeof TestResultSchema>;
 export type TestReportZ = z.infer<typeof TestReportSchema>;

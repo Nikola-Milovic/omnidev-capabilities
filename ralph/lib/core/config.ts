@@ -15,6 +15,7 @@ import type {
 	TestingConfig,
 	ScriptsConfig,
 	DocsConfig,
+	ReviewConfig,
 } from "../types.js";
 import { type Result, ok, err, ErrorCodes } from "../results.js";
 
@@ -31,6 +32,7 @@ interface RawTomlConfig {
 		testing?: RawTestingConfig;
 		scripts?: RawScriptsConfig;
 		docs?: RawDocsConfig;
+		review?: RawReviewConfig;
 	};
 }
 
@@ -58,6 +60,16 @@ interface RawScriptsConfig {
 interface RawDocsConfig {
 	path?: string;
 	auto_update?: boolean;
+}
+
+interface RawReviewConfig {
+	enabled?: boolean;
+	external_tool?: string;
+	finalize_enabled?: boolean;
+	finalize_prompt?: string;
+	first_review_agents?: string[];
+	second_review_agents?: string[];
+	max_fix_iterations?: number;
 }
 
 /**
@@ -142,6 +154,33 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 			docs.auto_update = ralph.docs.auto_update;
 		}
 		config.docs = docs;
+	}
+
+	// Review config
+	if (ralph.review) {
+		const review: ReviewConfig = {};
+		if (ralph.review.enabled !== undefined) {
+			review.enabled = ralph.review.enabled;
+		}
+		if (ralph.review.external_tool) {
+			review.external_tool = ralph.review.external_tool;
+		}
+		if (ralph.review.finalize_enabled !== undefined) {
+			review.finalize_enabled = ralph.review.finalize_enabled;
+		}
+		if (ralph.review.finalize_prompt) {
+			review.finalize_prompt = ralph.review.finalize_prompt;
+		}
+		if (ralph.review.first_review_agents) {
+			review.first_review_agents = ralph.review.first_review_agents;
+		}
+		if (ralph.review.second_review_agents) {
+			review.second_review_agents = ralph.review.second_review_agents;
+		}
+		if (ralph.review.max_fix_iterations !== undefined) {
+			review.max_fix_iterations = ralph.review.max_fix_iterations;
+		}
+		config.review = review;
 	}
 
 	return config;
@@ -230,6 +269,33 @@ export function getTestingConfig(config: RalphConfig): TestingConfig {
  */
 export function getScriptsConfig(config: RalphConfig): ScriptsConfig {
 	return config.scripts ?? {};
+}
+
+/**
+ * Default review agent types for each phase
+ */
+const DEFAULT_FIRST_REVIEW_AGENTS = [
+	"quality",
+	"implementation",
+	"testing",
+	"simplification",
+	"documentation",
+];
+const DEFAULT_SECOND_REVIEW_AGENTS = ["quality", "implementation"];
+
+/**
+ * Get review configuration with defaults filled in
+ */
+export function getReviewConfig(config: RalphConfig): Required<ReviewConfig> {
+	return {
+		enabled: config.review?.enabled ?? true,
+		external_tool: config.review?.external_tool ?? "none",
+		finalize_enabled: config.review?.finalize_enabled ?? false,
+		finalize_prompt: config.review?.finalize_prompt ?? "",
+		first_review_agents: config.review?.first_review_agents ?? DEFAULT_FIRST_REVIEW_AGENTS,
+		second_review_agents: config.review?.second_review_agents ?? DEFAULT_SECOND_REVIEW_AGENTS,
+		max_fix_iterations: config.review?.max_fix_iterations ?? 3,
+	};
 }
 
 // Re-export for backward compatibility

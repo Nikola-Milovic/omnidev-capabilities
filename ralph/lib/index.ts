@@ -20,6 +20,9 @@ export type {
 	PRDStatus,
 	PRDSummary,
 	RalphConfig,
+	ReviewConfig,
+	ReviewFinding,
+	ReviewRoundResult,
 	ScriptsConfig,
 	Story,
 	StoryStatus,
@@ -41,6 +44,7 @@ export {
 	TestingConfigSchema,
 	ScriptsConfigSchema,
 	DocsConfigSchema,
+	ReviewConfigSchema,
 	RalphConfigSchema,
 	TestResultSchema,
 	TestReportSchema,
@@ -60,6 +64,7 @@ export {
 	type TestingConfigZ,
 	type ScriptsConfigZ,
 	type DocsConfigZ,
+	type ReviewConfigZ,
 	type RalphConfigZ,
 	type TestResultZ,
 	type TestReportZ,
@@ -90,6 +95,7 @@ export {
 	hasAgent,
 	getTestingConfig,
 	getScriptsConfig,
+	getReviewConfig,
 } from "./core/config.js";
 
 // Core - Logger
@@ -176,8 +182,20 @@ export {
 	type RunAgentOptions,
 } from "./orchestrator.js";
 
+// Orchestration - Review Engine
+export { ReviewEngine } from "./orchestration/review-engine.js";
+
 // Prompt generation
 export { generateFindingsExtractionPrompt, generatePrompt } from "./prompt.js";
+
+// Review prompt generation
+export {
+	generateReviewPrompt,
+	generateFixPrompt,
+	generateExternalReviewPrompt,
+	generateFinalizePrompt,
+	parseReviewResult,
+} from "./review-prompt.js";
 
 // Verification
 export {

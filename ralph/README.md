@@ -72,9 +72,111 @@ PRDs move through three states:
 ### Automatic Transitions
 
 1. **Start PRD** → PRD moves from `pending` to `in_progress`
-2. **All stories complete** → PRD moves to `testing`, verification.md auto-generated
+2. **All stories complete** → Findings extracted → **Code review pipeline runs** → PRD moves to `testing`, verification.md auto-generated
 3. **Tests pass (PRD_VERIFIED)** → PRD moves to `completed`, findings extracted
 4. **Tests fail (PRD_FAILED)** → Fix story created, PRD moves back to `in_progress`
+
+## Code Review Pipeline
+
+When all stories are completed, Ralph runs a multi-phase code review pipeline before transitioning to testing. This catches bugs, security issues, and over-engineering early — before they reach QA.
+
+### Phases
+
+```
+All stories complete
+  → Extract findings
+  → Phase 1: First Code Review (5 parallel agents)
+  → Phase 1b: Fix agent resolves findings
+  → Phase 2: External Review (optional, e.g. codex)
+  → Phase 2b: Fix agent resolves findings
+  → Phase 3: Second Code Review (2 agents, critical only)
+  → Phase 3b: Fix agent resolves findings
+  → Phase 4: Finalize (optional)
+  → Transition to testing
+```
+
+### Review Agents
+
+| Agent | Focus | Model |
+|-------|-------|-------|
+| `quality` | Bugs, security, race conditions, error handling | sonnet |
+| `implementation` | Spec compliance, acceptance criteria | sonnet |
+| `testing` | Test coverage, assertion quality, edge cases | sonnet |
+| `simplification` | Over-engineering, dead code, unnecessary abstractions | sonnet |
+| `documentation` | Missing/outdated docs, README updates | haiku |
+
+All review agents are read-only — they cannot modify files. Each agent outputs a structured result:
+
+```xml
+<review-result>APPROVE</review-result>
+<!-- or -->
+<review-result>REQUEST_CHANGES</review-result>
+<review-findings>
+- [CRITICAL] file.ts:42 - SQL injection in query builder
+- [MAJOR] auth.ts:88 - Missing null check on user session
+</review-findings>
+```
+
+### Fix Loop
+
+When reviewers find CRITICAL or MAJOR issues, a fix agent is spawned to resolve them. The review-fix cycle repeats up to `max_fix_iterations` times (default: 3) or until the review is clean.
+
+### Configuration
+
+```toml
+[ralph.review]
+# Enable/disable the review pipeline (default: true)
+enabled = true
+
+# External review tool - agent name from [ralph.agents.*] (default: "none")
+external_tool = "codex"
+
+# Enable finalize step after review (default: false)
+finalize_enabled = false
+
+# Custom finalize prompt (optional)
+finalize_prompt = "Squash commits and clean up TODO comments."
+
+# Agents for first review pass (default: all 5)
+first_review_agents = ["quality", "implementation", "testing", "simplification", "documentation"]
+
+# Agents for second review pass (default: quality + implementation)
+second_review_agents = ["quality", "implementation"]
+
+# Max fix iterations per review phase (default: 3)
+max_fix_iterations = 3
+```
+
+### External Review
+
+Configure an external tool (e.g., codex) for Phase 2:
+
+```toml
+[ralph.review]
+external_tool = "codex"
+
+[ralph.agents.codex]
+command = "npx"
+args = ["-y", "@openai/codex", "exec", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "-"]
+```
+
+The external tool receives a simplified review prompt with the git diff and acceptance criteria. Its output is parsed for findings using the same severity format.
+
+### Review Results
+
+Review results are saved to `.omni/state/ralph/prds/<status>/<prd-name>/review-results/`:
+- `first-review.md` — Phase 1 results
+- `external-review.md` — Phase 2 results (if external tool configured)
+- `second-review.md` — Phase 3 results
+
+### Disabling Review
+
+```toml
+[ralph.review]
+enabled = false
+```
+
+When disabled, Ralph goes straight from development completion to testing (the original behavior).
 
 ## Testing Workflow
 
@@ -165,6 +267,11 @@ args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "--dangerously-s
 [ralph.agents.codex]
 command = "npx"
 args = ["-y", "@openai/codex", "exec", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "-"]
+
+[ralph.review]
+enabled = true
+external_tool = "none"
+max_fix_iterations = 3
 ```
 
 ## Testing Scripts
@@ -311,6 +418,7 @@ Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with these files
 | `progress.txt` | Log of work done (implementation + testing sessions) |
 | `verification.md` | Auto-generated test checklist |
 | `test-results/` | Test evidence (screenshots, API responses) |
+| `review-results/` | Code review findings and fix history |
 
 ### test-results/
 
@@ -365,7 +473,7 @@ PRDs can depend on other PRDs via the `dependencies` array. A PRD cannot start u
 # 2. Start development
 omnidev ralph start my-feature
 # Agent implements stories iteratively
-# When all stories complete → moves to testing
+# When all stories complete → code review pipeline runs → moves to testing
 
 # 3. Run tests
 omnidev ralph test my-feature
@@ -379,4 +487,7 @@ omnidev ralph start my-feature  # Fix the issues
 
 # 5. View completed PRD findings
 cat .omni/state/ralph/findings.md
+
+# 6. View review results
+cat .omni/state/ralph/prds/completed/my-feature/review-results/first-review.md
 ```

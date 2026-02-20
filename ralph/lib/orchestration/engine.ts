@@ -12,7 +12,13 @@ import type { PRD, AgentConfig, TestReport, RalphConfig } from "../types.js";
 import type { Result } from "../results.js";
 import { ok, err, ErrorCodes } from "../results.js";
 import { type PRDStore, getDefaultStore } from "../core/prd-store.js";
-import { loadConfig, getAgentConfig, getScriptsConfig, getTestingConfig } from "../core/config.js";
+import {
+	loadConfig,
+	getAgentConfig,
+	getScriptsConfig,
+	getTestingConfig,
+	getReviewConfig,
+} from "../core/config.js";
 import { type Logger, getLogger } from "../core/logger.js";
 import { type AgentRunner, getAgentRunner } from "./agent-runner.js";
 import { generatePrompt } from "../prompt.js";
@@ -30,6 +36,7 @@ import {
 	hasVerification,
 } from "../verification.js";
 import { extractAndSaveFindings } from "../state.js";
+import { ReviewEngine } from "./review-engine.js";
 
 /**
  * Engine context - dependencies injected into the engine
@@ -61,7 +68,11 @@ export type EngineEvent =
 			message: string;
 	  }
 	| { type: "test_complete"; result: "verified" | "failed" | "unknown"; issues?: string[] }
-	| { type: "error"; error: string };
+	| { type: "error"; error: string }
+	| { type: "review_start"; phase: "first" | "external" | "second" | "finalize" }
+	| { type: "review_agent_complete"; reviewType: string; decision: string; findingsCount: number }
+	| { type: "review_fix_start"; iteration: number; findingsCount: number }
+	| { type: "review_phase_complete"; phase: string; clean: boolean };
 
 /**
  * Options for running orchestration
@@ -84,6 +95,8 @@ export interface DevelopmentResult {
 	message: string;
 	storiesCompleted: number;
 	storiesRemaining: number;
+	reviewPerformed?: boolean;
+	reviewFindingsFixed?: number;
 }
 
 /**
@@ -355,7 +368,7 @@ export class OrchestrationEngine {
 	}
 
 	/**
-	 * Handle development completion - extract findings, generate verification, move to testing
+	 * Handle development completion - extract findings, run review, generate verification, move to testing
 	 */
 	private async handleDevelopmentComplete(
 		prdName: string,
@@ -366,6 +379,33 @@ export class OrchestrationEngine {
 	): Promise<void> {
 		await this.ctx.store.markCompleted(prdName);
 		await extractAndSaveFindings(prdName);
+
+		// Run code review pipeline
+		const configResult = await loadConfig();
+		if (configResult.ok) {
+			const reviewConfig = getReviewConfig(configResult.data!);
+			if (reviewConfig.enabled) {
+				const reviewEngine = new ReviewEngine(this.ctx);
+				const prdResult = await this.ctx.store.get(prdName);
+				const prd = prdResult.ok ? prdResult.data! : _prd;
+				const result = await reviewEngine.runReview(
+					prdName,
+					prd,
+					configResult.data!,
+					agentConfig,
+					reviewConfig,
+					emit,
+					signal,
+				);
+				if (!result.ok) {
+					emit({
+						type: "log",
+						level: "warn",
+						message: `Review had errors: ${result.error?.message}`,
+					});
+				}
+			}
+		}
 
 		const oldStatus = this.ctx.store.findLocation(prdName) ?? "pending";
 		await this.ctx.store.transition(prdName, "testing");

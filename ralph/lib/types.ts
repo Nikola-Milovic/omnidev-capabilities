@@ -159,6 +159,54 @@ export interface DocsConfig {
 }
 
 /**
+ * Review configuration for code review pipeline
+ */
+export interface ReviewConfig {
+	/** Whether review is enabled (default: true) */
+	enabled?: boolean;
+	/** External review tool agent name from [ralph.agents.*], or "none" (default: "none") */
+	external_tool?: string;
+	/** Whether the finalize step is enabled (default: false) */
+	finalize_enabled?: boolean;
+	/** Custom prompt for the finalize step */
+	finalize_prompt?: string;
+	/** Agent types for the first review round (default: quality, implementation, testing, simplification, documentation) */
+	first_review_agents?: string[];
+	/** Agent types for the second review round (default: quality, implementation) */
+	second_review_agents?: string[];
+	/** Max fix iterations per review phase (default: 3) */
+	max_fix_iterations?: number;
+}
+
+/**
+ * A single finding from a review agent
+ */
+export interface ReviewFinding {
+	/** Severity level */
+	severity: "critical" | "major" | "minor" | "suggestion";
+	/** File path */
+	file: string;
+	/** Line number (if available) */
+	line?: number;
+	/** Description of the issue */
+	issue: string;
+	/** Which reviewer produced this finding */
+	reviewer: string;
+}
+
+/**
+ * Result of a single review round
+ */
+export interface ReviewRoundResult {
+	/** Which review type produced this result */
+	reviewType: string;
+	/** Overall decision */
+	decision: "approve" | "request_changes";
+	/** Individual findings */
+	findings: ReviewFinding[];
+}
+
+/**
  * Ralph configuration
  */
 export interface RalphConfig {
@@ -174,6 +222,8 @@ export interface RalphConfig {
 	scripts?: ScriptsConfig;
 	/** Documentation configuration */
 	docs?: DocsConfig;
+	/** Review configuration */
+	review?: ReviewConfig;
 }
 
 /**
