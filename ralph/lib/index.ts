@@ -147,6 +147,7 @@ export {
 	extractAndSaveFindings,
 	extractFindings,
 	findPRDLocation,
+	hasPRDFile,
 	getNextFixStoryId,
 	getNextStory,
 	getPRD,

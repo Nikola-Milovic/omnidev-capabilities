@@ -27,6 +27,7 @@ import {
 	findPRDLocation,
 	getProgress,
 	getSpec,
+	hasPRDFile,
 	listPRDsByStatus,
 	movePRD,
 	unblockStory,
@@ -150,7 +151,15 @@ export async function runList(flags: Record<string, unknown>): Promise<void> {
 	for (const { name, status } of sortedPrds) {
 		const prdDir = join(PRDS_DIR, status, name);
 		const prdPath = join(prdDir, "prd.json");
-		if (!existsSync(prdPath)) continue;
+
+		// Spec-only PRD (no prd.json yet — still in creation)
+		if (!existsSync(prdPath)) {
+			const statusEmoji = STATUS_EMOJI[status];
+			console.log(`${statusEmoji} ${name} [spec only] - awaiting story creation`);
+			console.log(`  Use /prd to complete story breakdown, or: omnidev ralph spec ${name}`);
+			console.log();
+			continue;
+		}
 
 		try {
 			const prd: PRD = JSON.parse(await readFile(prdPath, "utf-8"));
@@ -241,7 +250,23 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 		return;
 	}
 
-	const prdPath = join(PRDS_DIR, status, prdName, "prd.json");
+	const prdDir = join(PRDS_DIR, status, prdName);
+	const prdPath = join(prdDir, "prd.json");
+
+	// Spec-only PRD (no prd.json yet)
+	if (!existsSync(prdPath)) {
+		console.log(`\n=== ${prdName} ===`);
+		console.log(`Status: ${STATUS_EMOJI[status]} ${status} (spec only)`);
+		console.log(`\nThis PRD only has a spec.md — stories have not been created yet.`);
+		console.log(`Use /prd to complete story breakdown.`);
+
+		const specPath = join(prdDir, "spec.md");
+		if (existsSync(specPath)) {
+			console.log(`\nSpec: ${specPath}`);
+		}
+		return;
+	}
+
 	const prd: PRD = JSON.parse(await readFile(prdPath, "utf-8"));
 	const { canStart, unmetDependencies } = await canStartPRD(prdName);
 
@@ -384,6 +409,12 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 	const status = findPRDLocation(prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
+		process.exit(1);
+	}
+
+	if (!hasPRDFile(prdName)) {
+		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
+		console.error(`Complete the PRD creation first using /prd, then start.`);
 		process.exit(1);
 	}
 
@@ -543,6 +574,11 @@ export async function runPrd(flags: Record<string, unknown>, prdName?: unknown):
 		const status = findPRDLocation(prdName);
 		if (!status) {
 			console.error(`PRD not found: ${prdName}`);
+			process.exit(1);
+		}
+
+		if (!hasPRDFile(prdName)) {
+			console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories to extract findings from.`);
 			process.exit(1);
 		}
 
@@ -730,6 +766,12 @@ export async function runComplete(
 		process.exit(1);
 	}
 
+	if (!hasPRDFile(prdName)) {
+		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
+		console.error(`Complete the PRD creation first using /prd.`);
+		process.exit(1);
+	}
+
 	if (status !== "testing") {
 		console.error(`\n⚠️  PRD "${prdName}" is in ${status} status.`);
 		console.error(`Only PRDs in 'testing' status can be completed.`);
@@ -806,6 +848,12 @@ export async function runTest(flags: Record<string, unknown>, prdName?: unknown)
 	const status = findPRDLocation(prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
+		process.exit(1);
+	}
+
+	if (!hasPRDFile(prdName)) {
+		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
+		console.error(`Complete the PRD creation first using /prd.`);
 		process.exit(1);
 	}
 

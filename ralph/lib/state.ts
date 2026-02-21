@@ -69,6 +69,16 @@ export function findPRDLocation(name: string): PRDStatus | null {
 }
 
 /**
+ * Check if a PRD has a prd.json file (stories defined).
+ * Spec-only PRDs (during creation) will return false.
+ */
+export function hasPRDFile(name: string): boolean {
+	const status = findPRDLocation(name);
+	if (!status) return false;
+	return existsSync(join(getPRDPathByStatus(name, status), "prd.json"));
+}
+
+/**
  * Get the path to a PRD directory (finds location automatically)
  */
 function getPRDPath(name: string): string | null {
