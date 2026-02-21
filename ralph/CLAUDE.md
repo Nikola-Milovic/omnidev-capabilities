@@ -40,7 +40,8 @@ ralph/
 │   ├── architect.md      # Opus, read-only, strategic analysis
 │   ├── code-reviewer.md  # Opus, read-only, two-stage review
 │   ├── explore.md        # Haiku, read-only, codebase search
-│   ├── prd-reviewer.md   # Sonnet, read-only, PRD review
+│   ├── prd-reviewer.md   # Sonnet, read-only, PRD review (spec + stories)
+│   ├── spec-reviewer.md  # Sonnet, read-only, spec-only review (pre-stories)
 │   ├── research.md       # Sonnet, read-only, external docs
 │   └── review/           # Review pipeline agents
 │       ├── quality.md        # Sonnet, bugs/security/error handling

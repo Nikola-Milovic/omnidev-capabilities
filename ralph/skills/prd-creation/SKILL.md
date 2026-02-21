@@ -76,27 +76,14 @@ With codebase and domain knowledge in hand, conduct an in-depth interview using 
 
 Use the AskUserQuestion tool to present options, gather preferences, and validate your understanding. Keep interviewing until you have enough detail to write a comprehensive spec that an implementer could follow without further clarification.
 
-### 4. Create the PRD Folder Structure
+### 4. Create Folder and Write spec.md
 
-PRDs are stored in status-based folders:
-
-- `pending/` - PRDs not yet started
-- `in_progress/` - PRDs actively being worked on
-- `testing/` - PRDs with all stories complete, awaiting verification
-- `completed/` - Verified and finished PRDs
-
-Create new PRDs in the `pending` folder:
+Create the PRD folder in the `pending` directory and write **only spec.md** at this stage. Do not create prd.json or progress.txt yet — the spec needs to be reviewed and confirmed before investing effort in story breakdown.
 
 ```
 .omni/state/ralph/prds/pending/<prd-name>/
-  ├── prd.json       # Orchestration file with stories
-  ├── spec.md        # Detailed feature specification
-  └── progress.txt   # Progress log (empty initially)
+  └── spec.md        # Detailed feature specification
 ```
-
-When `omnidev ralph start` is run, the PRD moves to `in_progress/`.
-
-### 5. Write the Spec File (spec.md)
 
 The spec describes WHAT the feature should do (requirements), NOT HOW to implement it.
 
@@ -134,9 +121,64 @@ The feature is complete when:
 - [ ] No type errors
 ```
 
-### 6. Write the PRD File (prd.json)
+### 5. Spec Review Loop
 
-Break down the work into stories (manageable chunks):
+Before creating stories, the spec must be reviewed to catch requirements issues early. Run both internal and external (if configured) reviews, then present findings to the user.
+
+#### 5a. Run the spec-reviewer agent
+
+Invoke the `spec-reviewer` subagent using the Task tool. Pass the full content of spec.md for review. The reviewer evaluates requirements quality, problem/goal alignment, edge cases, consistency, and implementability.
+
+#### 5b. Run external review (if configured)
+
+Check `omni.toml` for `[ralph.review]` configuration:
+
+```toml
+[ralph.review]
+external_tool = "codex"  # or "none" (default)
+```
+
+If `external_tool` is set to something other than `"none"`:
+
+1. Look up the agent's command and args from `[ralph.agents.<name>]` in omni.toml
+2. Invoke it via Bash, piping a spec review prompt to stdin:
+
+```
+echo "<prompt with spec content>" | <command> <args>
+```
+
+The prompt should ask the external tool to review the spec for clarity, completeness, edge cases, and implementability — the same concerns as the spec-reviewer but from an independent perspective.
+
+If `external_tool` is `"none"` or not configured, skip this step.
+
+#### 5c. Present consolidated findings
+
+Combine findings from all reviewers and present to the user using AskUserQuestion:
+
+- Group issues by severity (CRITICAL, MAJOR, MINOR)
+- Include any questions from the reviewers
+- Ask the user: **Address the issues, or approve the spec as-is?**
+
+Options:
+- **Address issues**: Update spec.md based on findings, then loop back to step 5a
+- **Approve as-is**: Accept the spec and proceed to story creation
+
+Keep iterating until the user approves the spec.
+
+### 6. User Confirmation
+
+Present a brief summary of what the final spec covers:
+
+- The problem being solved
+- Key requirements (count of FRs)
+- Edge cases covered
+- Acceptance criteria
+
+Ask the user to confirm they're ready to proceed with story creation. This is the last checkpoint before investing effort in the prd.json breakdown.
+
+### 7. Write the PRD File (prd.json)
+
+Now that the spec is confirmed, break down the work into stories:
 
 ```json
 {
@@ -196,7 +238,7 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 
 `omnidev ralph start` will refuse to run a PRD with incomplete dependencies.
 
-### 7. Create Empty Progress File
+### 8. Create Empty Progress File
 
 ```
 ## Codebase Patterns
@@ -210,9 +252,9 @@ If this PRD depends on other PRDs being completed first, add them to the `depend
 Started: [Date]
 ```
 
-### 8. Run PRD Review (Automatic)
+### 9. Run PRD Review (Automatic)
 
-After writing the PRD files, immediately run the `prd-reviewer` agent. The reviewer catches structural and goal alignment issues that cause implementation failures — running it now prevents wasted iteration cycles later.
+After writing prd.json, immediately run the `prd-reviewer` agent. This reviewer checks the complete PRD (spec.md + prd.json together) for structural quality and goal alignment — story ordering, dependency chains, sizing, and acceptance criteria testability.
 
 The reviewer returns a verdict:
 
