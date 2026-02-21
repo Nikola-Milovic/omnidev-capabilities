@@ -584,7 +584,7 @@ export async function runPrd(flags: Record<string, unknown>, prdName?: unknown):
 
 		console.log(`Extracting findings from "${prdName}"...`);
 		await extractAndSaveFindings(prdName);
-		console.log("Findings extracted to .omni/state/ralph/findings.md");
+		console.log(`Findings extracted to PRD directory`);
 		return;
 	}
 
@@ -713,7 +713,7 @@ const prdCommand = command({
 			},
 			"extract-findings": {
 				kind: "boolean",
-				brief: "Extract findings from PRD to findings.md",
+				brief: "Extract findings from PRD progress to per-PRD findings.md",
 				optional: true,
 			},
 		},
@@ -798,14 +798,13 @@ export async function runComplete(
 
 		console.log("Extracting findings via LLM...");
 		await extractAndSaveFindings(prdName, agentConfig, runAgent);
-		console.log("Findings saved to .omni/state/ralph/findings.md");
+		console.log("Findings saved to PRD directory");
 
 		console.log("Moving PRD to completed...");
 		await movePRD(prdName, "completed");
 
 		console.log(`\n✅ PRD "${prdName}" completed!`);
 		console.log(`\nFindings have been extracted and saved.`);
-		console.log(`View findings: cat .omni/state/ralph/findings.md`);
 	} catch (error) {
 		console.error(`\nError completing PRD: ${error}`);
 		process.exit(1);
@@ -895,6 +894,406 @@ const testCommand = command({
 	func: runTest,
 });
 
+// ── Runner commands ────────────────────────────────────────────────────
+
+/**
+ * Create a RunnerManager from config. Shared by all run sub-commands.
+ */
+async function createRunnerManager() {
+	const { loadConfig, getRunnerConfig } = await import("./lib/index.js");
+	const { RunnerManager, TmuxSessionBackend } = await import("./lib/runner/index.js");
+
+	const configResult = await loadConfig();
+	if (!configResult.ok) {
+		console.error(configResult.error!.message);
+		process.exit(1);
+	}
+	const config = configResult.data!;
+
+	if (!config.project_name) {
+		console.error("project_name is required in [ralph] for runner commands.");
+		console.error('Add: project_name = "your-project" to [ralph] in omni.toml');
+		process.exit(1);
+	}
+
+	const runnerConfig = getRunnerConfig(config);
+	const session = new TmuxSessionBackend(runnerConfig.panes_per_window);
+	return new RunnerManager(runnerConfig, session, config.project_name);
+}
+
+/**
+ * Format a run instance for display
+ */
+function formatRunInstance(run: {
+	prdName: string;
+	status: string;
+	worktree: string;
+	paneId: string;
+	startedAt: string;
+	branch: string;
+}) {
+	const elapsed = formatDuration(run.startedAt);
+	return `  ${run.prdName} [${run.status}] — ${elapsed} — pane: ${run.paneId}`;
+}
+
+async function runRunStart(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run start <prd-name> [--agent <agent>]");
+		process.exit(1);
+	}
+
+	const manager = await createRunnerManager();
+	const agent = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
+	const result = await manager.start(prdName, { agent });
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	const run = result.data!;
+	console.log(`Started "${prdName}" in worktree: ${run.worktree}`);
+	console.log(`  Pane: ${run.paneId} | Branch: ${run.branch}`);
+	if (run.worktree !== run.branch) {
+		console.log(`  Warning: worktree was reused`);
+	}
+}
+
+async function runRunTest(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run test <prd-name> [--agent <agent>]");
+		process.exit(1);
+	}
+
+	const manager = await createRunnerManager();
+	const agent = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
+	const result = await manager.test(prdName, { agent });
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	console.log(`Testing "${prdName}" — pane: ${result.data!.paneId}`);
+}
+
+async function runRunStop(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	const manager = await createRunnerManager();
+
+	if (flags["all"] === true) {
+		const result = await manager.stopAll();
+		if (!result.ok) {
+			console.error(`Error: ${result.error!.message}`);
+			process.exit(1);
+		}
+		console.log("All runs stopped.");
+		return;
+	}
+
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run stop <prd-name> | --all");
+		process.exit(1);
+	}
+
+	const result = await manager.stop(prdName);
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+	console.log(`Stopped "${prdName}".`);
+}
+
+async function runRunList(_flags: Record<string, unknown>): Promise<void> {
+	const manager = await createRunnerManager();
+	const result = await manager.list();
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	const runs = result.data!;
+	if (runs.length === 0) {
+		console.log("No active runs.");
+		return;
+	}
+
+	console.log("\n=== Active Runs ===\n");
+	for (const run of runs) {
+		console.log(formatRunInstance(run));
+	}
+	console.log();
+}
+
+async function runRunAttach(_flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run attach <prd-name>");
+		process.exit(1);
+	}
+
+	const manager = await createRunnerManager();
+	const result = await manager.attach(prdName);
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+}
+
+async function runRunLogs(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run logs <prd-name> [--tail <n>]");
+		process.exit(1);
+	}
+
+	const manager = await createRunnerManager();
+	const tail = typeof flags["tail"] === "number" ? flags["tail"] : 100;
+	const result = await manager.logs(prdName, tail);
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	console.log(result.data!);
+}
+
+async function runRunMerge(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	const manager = await createRunnerManager();
+
+	if (flags["all"] === true) {
+		const result = await manager.mergeAll();
+		if (!result.ok) {
+			console.error(`Error: ${result.error!.message}`);
+			process.exit(1);
+		}
+		const merged = result.data!;
+		if (merged.length === 0) {
+			console.log("No runs to merge.");
+		} else {
+			for (const m of merged) {
+				console.log(
+					`Merged "${m.prdName}" — commit: ${m.commitSha.slice(0, 8)} — ${m.filesChanged.length} file(s)`,
+				);
+			}
+		}
+		return;
+	}
+
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run merge <prd-name> | --all");
+		process.exit(1);
+	}
+
+	const result = await manager.merge(prdName);
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		if (result.error!.details?.["conflictFiles"]) {
+			console.error("Conflicting files:");
+			for (const f of result.error!.details["conflictFiles"] as string[]) {
+				console.error(`  - ${f}`);
+			}
+		}
+		process.exit(1);
+	}
+
+	const m = result.data!;
+	console.log(
+		`Merged "${m.prdName}" — commit: ${m.commitSha.slice(0, 8)} — ${m.filesChanged.length} file(s)`,
+	);
+}
+
+async function runRunCleanup(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	const manager = await createRunnerManager();
+
+	if (flags["all"] === true) {
+		const result = await manager.cleanupAll();
+		if (!result.ok) {
+			console.error(`Error: ${result.error!.message}`);
+			process.exit(1);
+		}
+		console.log("All stale/stopped runs cleaned up.");
+		return;
+	}
+
+	if (!prdName || typeof prdName !== "string") {
+		console.error("Usage: omnidev ralph run cleanup <prd-name> | --all");
+		process.exit(1);
+	}
+
+	const result = await manager.cleanup(prdName);
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+	console.log(`Cleaned up "${prdName}".`);
+}
+
+async function runRunRecover(_flags: Record<string, unknown>): Promise<void> {
+	const manager = await createRunnerManager();
+	const result = await manager.recover();
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	const r = result.data!;
+	if (r.recovered.length > 0) {
+		console.log("Recovered (still running):");
+		for (const inst of r.recovered) {
+			console.log(`  ${inst.prdName} — pane: ${inst.paneId}`);
+		}
+	}
+	if (r.orphaned.length > 0) {
+		console.log("Orphaned (worktree exists, no session):");
+		for (const o of r.orphaned) {
+			console.log(`  ${o.prdName} — ${o.worktree}`);
+		}
+		console.log("\nUse 'ralph run <prd>' to restart or 'ralph run cleanup <prd>' to remove.");
+	}
+	if (r.cleaned.length > 0) {
+		console.log(`Cleaned stale entries: ${r.cleaned.join(", ")}`);
+	}
+	if (r.recovered.length === 0 && r.orphaned.length === 0 && r.cleaned.length === 0) {
+		console.log("Nothing to recover.");
+	}
+}
+
+async function runRunConflicts(_flags: Record<string, unknown>): Promise<void> {
+	const manager = await createRunnerManager();
+	const result = await manager.conflicts();
+
+	if (!result.ok) {
+		console.error(`Error: ${result.error!.message}`);
+		process.exit(1);
+	}
+
+	const reports = result.data!;
+	if (reports.length === 0) {
+		console.log("No merge conflicts detected.");
+		return;
+	}
+
+	console.log("\n=== Merge Conflicts ===\n");
+	for (const r of reports) {
+		console.log(`${r.prdName} (branch: ${r.branch}):`);
+		for (const f of r.conflictFiles) {
+			console.log(`  - ${f}`);
+		}
+		console.log();
+	}
+}
+
+// Build run sub-commands
+const runStartCommand = command({
+	brief: "Start a PRD in a new worktree + tmux pane",
+	parameters: {
+		flags: {
+			agent: { kind: "string", brief: "Agent to use", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string" }],
+	},
+	func: runRunStart,
+});
+
+const runTestCommand = command({
+	brief: "Run tests for a PRD in its worktree",
+	parameters: {
+		flags: {
+			agent: { kind: "string", brief: "Agent to use", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string" }],
+	},
+	func: runRunTest,
+});
+
+const runStopCommand = command({
+	brief: "Stop a running PRD (sends interrupt)",
+	parameters: {
+		flags: {
+			all: { kind: "boolean", brief: "Stop all running PRDs", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string", optional: true }],
+	},
+	func: runRunStop,
+});
+
+const runListCommand = command({
+	brief: "List all active runs with status",
+	parameters: {},
+	func: runRunList,
+});
+
+const runAttachCommand = command({
+	brief: "Focus a PRD's tmux pane",
+	parameters: {
+		positional: [{ brief: "PRD name", kind: "string" }],
+	},
+	func: runRunAttach,
+});
+
+const runLogsCommand = command({
+	brief: "View recent output from a PRD's pane",
+	parameters: {
+		flags: {
+			tail: { kind: "number", brief: "Number of lines (default: 100)", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string" }],
+	},
+	func: runRunLogs,
+});
+
+const runMergeCommand = command({
+	brief: "Merge a PRD's branch into main",
+	parameters: {
+		flags: {
+			all: { kind: "boolean", brief: "Merge all completed/stopped PRDs", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string", optional: true }],
+	},
+	func: runRunMerge,
+});
+
+const runCleanupCommand = command({
+	brief: "Remove worktree + session resources without merging",
+	parameters: {
+		flags: {
+			all: { kind: "boolean", brief: "Clean up all stale/stopped runs", optional: true },
+		},
+		positional: [{ brief: "PRD name", kind: "string", optional: true }],
+	},
+	func: runRunCleanup,
+});
+
+const runRecoverCommand = command({
+	brief: "Recover from session loss (tmux died, etc.)",
+	parameters: {},
+	func: runRunRecover,
+});
+
+const runConflictsCommand = command({
+	brief: "Check for merge conflicts across running PRDs",
+	parameters: {},
+	func: runRunConflicts,
+});
+
+const runRoutes = routes({
+	brief: "Parallel PRD execution via worktrees + tmux",
+	routes: {
+		start: runStartCommand,
+		test: runTestCommand,
+		stop: runStopCommand,
+		list: runListCommand,
+		attach: runAttachCommand,
+		logs: runLogsCommand,
+		merge: runMergeCommand,
+		cleanup: runCleanupCommand,
+		recover: runRecoverCommand,
+		conflicts: runConflictsCommand,
+	},
+});
+
 // Export route map
 export const ralphRoutes = routes({
 	brief: "Ralph AI orchestrator",
@@ -907,5 +1306,6 @@ export const ralphRoutes = routes({
 		spec: specCommand,
 		complete: completeCommand,
 		test: testCommand,
+		run: runRoutes,
 	},
 });

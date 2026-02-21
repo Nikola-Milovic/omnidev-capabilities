@@ -23,6 +23,7 @@ export type {
 	ReviewConfig,
 	ReviewFinding,
 	ReviewRoundResult,
+	RunnerConfig,
 	ScriptsConfig,
 	Story,
 	StoryStatus,
@@ -45,6 +46,7 @@ export {
 	ScriptsConfigSchema,
 	DocsConfigSchema,
 	ReviewConfigSchema,
+	RunnerConfigSchema,
 	RalphConfigSchema,
 	TestResultSchema,
 	TestReportSchema,
@@ -65,6 +67,7 @@ export {
 	type ScriptsConfigZ,
 	type DocsConfigZ,
 	type ReviewConfigZ,
+	type RunnerConfigZ,
 	type RalphConfigZ,
 	type TestResultZ,
 	type TestReportZ,
@@ -96,6 +99,7 @@ export {
 	getTestingConfig,
 	getScriptsConfig,
 	getReviewConfig,
+	getRunnerConfig,
 } from "./core/config.js";
 
 // Core - Logger
@@ -266,3 +270,49 @@ export {
 	isValidTransition,
 	getAvailableActions,
 } from "./results.js";
+
+// Runner module — parallel PRD execution via worktrees + session backends
+export {
+	// Main API
+	RunnerManager,
+	readWorktreePRD,
+	// Session backends
+	TmuxSessionBackend,
+	// Types
+	type RunStatus,
+	type RunInstance,
+	type StartOptions,
+	type TestOptions,
+	type MergeResult,
+	type ConflictReport,
+	type RecoverResult,
+	type RunnerState,
+	type PersistedRunInstance,
+	type PaneInfo,
+	type PaneOptions,
+	type SessionBackend,
+	DEFAULT_RUNNER_CONFIG,
+	// Worktree operations
+	type WorktreeInfo,
+	getCurrentBranch,
+	branchExists,
+	listWorktrees,
+	resolveWorktreePath,
+	createWorktree,
+	removeWorktree,
+	hasUncommittedChanges,
+	mergeWorktree,
+	checkMergeConflicts,
+	isStateTracked,
+	getMainWorktreePath,
+	isMainWorktree,
+	// Runner state
+	loadRunnerState,
+	saveRunnerState,
+	upsertRun,
+	updateRunStatus,
+	removeRun as removeRunInstance,
+	getRun,
+	getAllRuns,
+	reconcile,
+} from "./runner/index.js";

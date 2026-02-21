@@ -1015,7 +1015,7 @@ export async function runTesting(
 		await runTeardown();
 
 		console.log(`\n🎉 PRD "${prdName}" has been completed!`);
-		console.log(`Findings saved to .omni/state/ralph/findings.md`);
+		console.log(`Findings saved to PRD directory`);
 		console.log(`Test report: ${reportPath}`);
 
 		return { report, result: "verified" };

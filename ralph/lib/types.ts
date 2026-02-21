@@ -207,9 +207,23 @@ export interface ReviewRoundResult {
 }
 
 /**
+ * Runner configuration for parallel PRD execution
+ */
+export interface RunnerConfig {
+	/** Relative path to parent directory for worktrees (default: "..") */
+	worktree_parent?: string;
+	/** Max panes per tmux window (default: 4) */
+	panes_per_window?: number;
+	/** Seconds before auto-closing a completed pane (default: 30) */
+	pane_close_timeout?: number;
+}
+
+/**
  * Ralph configuration
  */
 export interface RalphConfig {
+	/** Project name — used as session name for runner (e.g., "srbshop") */
+	project_name?: string;
 	/** Default agent to use */
 	default_agent: string;
 	/** Default max iterations */
@@ -224,6 +238,8 @@ export interface RalphConfig {
 	docs?: DocsConfig;
 	/** Review configuration */
 	review?: ReviewConfig;
+	/** Runner configuration for parallel PRD execution */
+	runner?: RunnerConfig;
 }
 
 /**

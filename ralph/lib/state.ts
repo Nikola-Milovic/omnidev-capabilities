@@ -19,7 +19,6 @@ import type {
 } from "./types.js";
 
 const RALPH_DIR = ".omni/state/ralph";
-const FINDINGS_PATH = join(RALPH_DIR, "findings.md");
 
 const PRD_STATUS_DIRS: Record<PRDStatus, string> = {
 	pending: join(RALPH_DIR, "prds", "pending"),
@@ -593,19 +592,33 @@ export async function extractFindings(prdName: string): Promise<string> {
 }
 
 /**
- * Append findings to the global findings.md file
+ * Append findings to the per-PRD findings.md file
  */
-export async function appendToFindings(content: string): Promise<void> {
+export async function appendToFindings(content: string, prdName?: string): Promise<void> {
 	if (!content.trim()) return;
 
-	const findingsPath = join(process.cwd(), FINDINGS_PATH);
+	let findingsPath: string;
+
+	if (prdName) {
+		// Per-PRD findings (preferred)
+		const prdPath = getPRDPath(prdName);
+		if (!prdPath) {
+			throw new Error(`PRD not found: ${prdName}`);
+		}
+		findingsPath = join(prdPath, "findings.md");
+	} else {
+		// Legacy global fallback
+		findingsPath = join(process.cwd(), RALPH_DIR, "findings.md");
+	}
+
 	let existingContent = "";
 
 	if (existsSync(findingsPath)) {
 		existingContent = await readFile(findingsPath, "utf-8");
 	} else {
 		existingContent = "# Ralph Findings\n\n";
-		mkdirSync(join(process.cwd(), RALPH_DIR), { recursive: true });
+		const dir = prdName ? getPRDPath(prdName)! : join(process.cwd(), RALPH_DIR);
+		mkdirSync(dir, { recursive: true });
 	}
 
 	await writeFile(findingsPath, existingContent + content);
@@ -640,7 +653,7 @@ export async function extractAndSaveFindings(
 		findings = await extractFindings(prdName);
 	}
 
-	await appendToFindings(findings);
+	await appendToFindings(findings, prdName);
 }
 
 /**

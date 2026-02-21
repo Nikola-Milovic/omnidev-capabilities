@@ -16,6 +16,7 @@ import type {
 	ScriptsConfig,
 	DocsConfig,
 	ReviewConfig,
+	RunnerConfig,
 } from "../types.js";
 import { type Result, ok, err, ErrorCodes } from "../results.js";
 
@@ -26,6 +27,7 @@ const CONFIG_PATH = "omni.toml";
  */
 interface RawTomlConfig {
 	ralph?: {
+		project_name?: string;
 		default_agent?: string;
 		default_iterations?: number;
 		agents?: Record<string, RawAgentConfig>;
@@ -33,6 +35,7 @@ interface RawTomlConfig {
 		scripts?: RawScriptsConfig;
 		docs?: RawDocsConfig;
 		review?: RawReviewConfig;
+		runner?: RawRunnerConfig;
 	};
 }
 
@@ -72,6 +75,12 @@ interface RawReviewConfig {
 	max_fix_iterations?: number;
 }
 
+interface RawRunnerConfig {
+	worktree_parent?: string;
+	panes_per_window?: number;
+	pane_close_timeout?: number;
+}
+
 /**
  * Transform raw TOML config to RalphConfig structure
  */
@@ -84,6 +93,9 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 	const config: Partial<RalphConfig> = {};
 
 	// Top-level settings
+	if (ralph.project_name) {
+		config.project_name = ralph.project_name;
+	}
 	if (ralph.default_agent) {
 		config.default_agent = ralph.default_agent;
 	}
@@ -181,6 +193,21 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 			review.max_fix_iterations = ralph.review.max_fix_iterations;
 		}
 		config.review = review;
+	}
+
+	// Runner config
+	if (ralph.runner) {
+		const runner: RunnerConfig = {};
+		if (ralph.runner.worktree_parent) {
+			runner.worktree_parent = ralph.runner.worktree_parent;
+		}
+		if (ralph.runner.panes_per_window !== undefined) {
+			runner.panes_per_window = ralph.runner.panes_per_window;
+		}
+		if (ralph.runner.pane_close_timeout !== undefined) {
+			runner.pane_close_timeout = ralph.runner.pane_close_timeout;
+		}
+		config.runner = runner;
 	}
 
 	return config;
@@ -295,6 +322,17 @@ export function getReviewConfig(config: RalphConfig): Required<ReviewConfig> {
 		first_review_agents: config.review?.first_review_agents ?? DEFAULT_FIRST_REVIEW_AGENTS,
 		second_review_agents: config.review?.second_review_agents ?? DEFAULT_SECOND_REVIEW_AGENTS,
 		max_fix_iterations: config.review?.max_fix_iterations ?? 3,
+	};
+}
+
+/**
+ * Get runner configuration with defaults filled in
+ */
+export function getRunnerConfig(config: RalphConfig): Required<RunnerConfig> {
+	return {
+		worktree_parent: config.runner?.worktree_parent ?? "..",
+		panes_per_window: config.runner?.panes_per_window ?? 4,
+		pane_close_timeout: config.runner?.pane_close_timeout ?? 30,
 	};
 }
 
