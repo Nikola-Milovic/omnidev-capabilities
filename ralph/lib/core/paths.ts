@@ -2,13 +2,11 @@
  * Ralph Path Resolution
  *
  * Single source of truth for state directory paths.
- * All state lives at $XDG_STATE_HOME/omnidev/ralph/<project-key>/
- * where project-key is <project_name>-<hash of repo root>.
+ * All state lives at $XDG_STATE_HOME/omnidev/ralph/<project_name>/
  */
 
-import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { writeFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PRDStatus } from "../types.js";
@@ -25,11 +23,10 @@ export function validateProjectName(name: string): boolean {
 
 /**
  * Derive the project key used as the state directory name.
- * Format: <projectName>-<first 8 hex chars of SHA-256 of absolute repo root>
+ * This is just the project name — each project must have a unique name.
  */
-export function getProjectKey(projectName: string, repoRoot: string): string {
-	const hash = createHash("sha256").update(resolve(repoRoot)).digest("hex").slice(0, 8);
-	return `${projectName}-${hash}`;
+export function getProjectKey(projectName: string, _repoRoot: string): string {
+	return projectName;
 }
 
 /**
@@ -42,7 +39,7 @@ export function getXdgStateHome(): string {
 
 /**
  * Get the root state directory for a project.
- * e.g. ~/.local/state/omnidev/ralph/myapp-a1b2c3d4/
+ * e.g. ~/.local/state/omnidev/ralph/myapp/
  */
 export function getStateDir(projectName: string, repoRoot: string): string {
 	return join(getXdgStateHome(), "omnidev", "ralph", getProjectKey(projectName, repoRoot));
