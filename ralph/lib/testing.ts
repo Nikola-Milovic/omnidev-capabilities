@@ -23,6 +23,7 @@ import {
 import type { RalphConfig, TestReport, TestResult } from "./types.js";
 import { getVerification, hasVerification } from "./verification.js";
 import { updateDocumentation } from "./documentation.js";
+import { getStatusDir } from "./core/paths.js";
 
 /**
  * Run a script from a configured path
@@ -224,21 +225,27 @@ playwriter session reset 1
 /**
  * Generate the test prompt for the agent
  */
-export async function generateTestPrompt(prdName: string, config: RalphConfig): Promise<string> {
-	const prd = await getPRD(prdName);
-	const status = findPRDLocation(prdName);
+export async function generateTestPrompt(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	config: RalphConfig,
+): Promise<string> {
+	const prd = await getPRD(projectName, repoRoot, prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
+	const prdDir = status ? `${getStatusDir(projectName, repoRoot, status)}/${prdName}` : "(unknown)";
 
 	// Load all context files
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}
 
 	let verificationContent = "";
 	try {
-		verificationContent = await getVerification(prdName);
+		verificationContent = await getVerification(projectName, repoRoot, prdName);
 	} catch {
 		verificationContent =
 			"(verification.md not found - generate it first with 'omnidev ralph verify')";
@@ -246,7 +253,7 @@ export async function generateTestPrompt(prdName: string, config: RalphConfig): 
 
 	let progressContent = "";
 	try {
-		progressContent = await getProgress(prdName);
+		progressContent = await getProgress(projectName, repoRoot, prdName);
 	} catch {
 		progressContent = "(no progress log)";
 	}
@@ -267,7 +274,7 @@ export async function generateTestPrompt(prdName: string, config: RalphConfig): 
 	const prdJson = JSON.stringify(prd, null, 2);
 
 	// Get test results directory path
-	const testResultsDir = getTestResultsDir(prdName) || "test-results";
+	const testResultsDir = getTestResultsDir(projectName, repoRoot, prdName) || "test-results";
 
 	return `<Role>
 QA engineer for the ${prd.name} feature. Your job is to verify the feature works correctly and probe for failures — invalid inputs, edge cases, error handling, and boundary conditions. A feature that passes the happy path but crashes on edge cases is not ready.
@@ -306,11 +313,11 @@ Save all evidence to: \`${testResultsDir}/\`
 - API responses: \`${testResultsDir}/api-responses/\`
 
 ### File Paths
-- PRD: .omni/state/ralph/prds/${status}/${prdName}/prd.json
-- Spec: .omni/state/ralph/prds/${status}/${prdName}/spec.md
-- Progress: .omni/state/ralph/prds/${status}/${prdName}/progress.txt (append testing session here)
-- Verification: .omni/state/ralph/prds/${status}/${prdName}/verification.md (update checkboxes here)
-- Test Results: .omni/state/ralph/prds/${status}/${prdName}/test-results/
+- PRD: ${prdDir}/prd.json
+- Spec: ${prdDir}/spec.md
+- Progress: ${prdDir}/progress.txt (append testing session here)
+- Verification: ${prdDir}/verification.md (update checkboxes here)
+- Test Results: ${prdDir}/test-results/
 
 </Context>
 
@@ -619,8 +626,13 @@ export function parseTestReport(output: string, prdName: string): TestReport {
 /**
  * Save test report to file
  */
-export async function saveTestReport(prdName: string, report: TestReport): Promise<string> {
-	const testResultsDir = getTestResultsDir(prdName);
+export async function saveTestReport(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	report: TestReport,
+): Promise<string> {
+	const testResultsDir = getTestResultsDir(projectName, repoRoot, prdName);
 	if (!testResultsDir) {
 		throw new Error(`PRD not found: ${prdName}`);
 	}
@@ -682,8 +694,12 @@ export async function saveTestReport(prdName: string, report: TestReport): Promi
 /**
  * Read previous test report and extract failed items
  */
-async function getPreviousFailures(prdName: string): Promise<string[] | null> {
-	const testResultsDir = getTestResultsDir(prdName);
+async function getPreviousFailures(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<string[] | null> {
+	const testResultsDir = getTestResultsDir(projectName, repoRoot, prdName);
 	if (!testResultsDir) return null;
 
 	const reportPath = join(testResultsDir, "report.md");
@@ -727,12 +743,15 @@ async function getPreviousFailures(prdName: string): Promise<string[] | null> {
  * Generate a focused retest prompt for previously failed items
  */
 async function generateRetestPrompt(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	previousFailures: string[],
 	config: RalphConfig,
 ): Promise<string> {
-	const status = findPRDLocation(prdName);
-	const testResultsDir = getTestResultsDir(prdName) || "test-results";
+	const status = findPRDLocation(projectName, repoRoot, prdName);
+	const prdDir = status ? `${getStatusDir(projectName, repoRoot, status)}/${prdName}` : "(unknown)";
+	const testResultsDir = getTestResultsDir(projectName, repoRoot, prdName) || "test-results";
 
 	// Get project verification instructions from config
 	const projectInstructions =
@@ -794,10 +813,10 @@ These signals determine PRD state transitions. The orchestrator parses them to d
 </Output_Format>
 
 <File_Paths>
-- PRD: .omni/state/ralph/prds/${status}/${prdName}/prd.json
-- Progress: .omni/state/ralph/prds/${status}/${prdName}/progress.txt
-- Verification: .omni/state/ralph/prds/${status}/${prdName}/verification.md
-- Test Results: .omni/state/ralph/prds/${status}/${prdName}/test-results/
+- PRD: ${prdDir}/prd.json
+- Progress: ${prdDir}/progress.txt
+- Verification: ${prdDir}/verification.md
+- Test Results: ${prdDir}/test-results/
 </File_Paths>
 `;
 }
@@ -806,6 +825,8 @@ These signals determine PRD state transitions. The orchestrator parses them to d
  * Run testing for a PRD with QA feedback loop
  */
 export async function runTesting(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	agentOverride?: string,
 ): Promise<{ report: TestReport; result: "verified" | "failed" | "unknown" }> {
@@ -822,7 +843,7 @@ export async function runTesting(
 	}
 
 	// Check PRD exists
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		throw new Error(`PRD not found: ${prdName}`);
 	}
@@ -834,23 +855,23 @@ export async function runTesting(
 	}
 
 	// Check for verification.md
-	if (!hasVerification(prdName)) {
+	if (!hasVerification(projectName, repoRoot, prdName)) {
 		console.log(`\n⚠️  No verification.md found for "${prdName}".`);
 		console.log("Generating verification checklist first...\n");
 
 		const { generateVerification, generateSimpleVerification } = await import("./verification.js");
 
 		try {
-			await generateVerification(prdName, agentConfig, runAgent);
+			await generateVerification(projectName, repoRoot, prdName, agentConfig, runAgent);
 			console.log("Verification checklist generated.\n");
 		} catch {
 			console.log("Failed to generate with LLM, using simple generator...\n");
-			await generateSimpleVerification(prdName);
+			await generateSimpleVerification(projectName, repoRoot, prdName);
 		}
 	}
 
 	// Check for previous test failures (for focused retesting)
-	const previousFailures = await getPreviousFailures(prdName);
+	const previousFailures = await getPreviousFailures(projectName, repoRoot, prdName);
 	const isFocusedRetest = previousFailures !== null && previousFailures.length > 0;
 
 	if (isFocusedRetest) {
@@ -865,7 +886,7 @@ export async function runTesting(
 	} else {
 		// Clear previous test results only for full test runs
 		console.log("Clearing previous test results...");
-		await clearTestResults(prdName);
+		await clearTestResults(projectName, repoRoot, prdName);
 	}
 
 	console.log(`\nStarting ${isFocusedRetest ? "focused retest" : "testing"} for PRD: ${prdName}`);
@@ -954,8 +975,8 @@ export async function runTesting(
 
 	// Generate test prompt (focused or full)
 	const prompt = isFocusedRetest
-		? await generateRetestPrompt(prdName, previousFailures, config)
-		: await generateTestPrompt(prdName, config);
+		? await generateRetestPrompt(projectName, repoRoot, prdName, previousFailures, config)
+		: await generateTestPrompt(projectName, repoRoot, prdName, config);
 
 	// Run agent with streaming output
 	console.log("\nSpawning test agent...\n");
@@ -973,7 +994,7 @@ export async function runTesting(
 
 	// Save report
 	console.log("Saving test report...");
-	const reportPath = await saveTestReport(prdName, report);
+	const reportPath = await saveTestReport(projectName, repoRoot, prdName, report);
 
 	// Helper to run teardown
 	const runTeardown = async () => {
@@ -991,13 +1012,20 @@ export async function runTesting(
 
 		// Extract findings
 		console.log("Extracting findings...");
-		await extractAndSaveFindings(prdName);
+		await extractAndSaveFindings(projectName, repoRoot, prdName);
 
 		// Update documentation if configured
 		if (config.docs?.path && config.docs.auto_update !== false) {
 			const docsPath = join(process.cwd(), config.docs.path);
 			try {
-				const docResults = await updateDocumentation(prdName, docsPath, agentConfig, runAgent);
+				const docResults = await updateDocumentation(
+					projectName,
+					repoRoot,
+					prdName,
+					docsPath,
+					agentConfig,
+					runAgent,
+				);
 				if (docResults.updated.length > 0) {
 					console.log(`Documentation updated: ${docResults.updated.join(", ")}`);
 				}
@@ -1010,7 +1038,7 @@ export async function runTesting(
 		}
 
 		// Move to completed
-		await movePRD(prdName, "completed");
+		await movePRD(projectName, repoRoot, prdName, "completed");
 
 		await runTeardown();
 
@@ -1032,20 +1060,23 @@ export async function runTesting(
 		// Create fix story
 		console.log("\nCreating fix story...");
 		const testResultsRelPath = `test-results/report.md`;
-		const fixStoryId = await addFixStory(prdName, issues, testResultsRelPath);
+		const fixStoryId = await addFixStory(
+			projectName,
+			repoRoot,
+			prdName,
+			issues,
+			testResultsRelPath,
+		);
 
 		// Move back to in_progress
 		console.log("Moving PRD back to in_progress...");
-		await movePRD(prdName, "in_progress");
+		await movePRD(projectName, repoRoot, prdName, "in_progress");
 
 		await runTeardown();
 
 		console.log(`\n📋 Fix story created: ${fixStoryId}`);
 		console.log(`PRD "${prdName}" moved back to in_progress.`);
-		console.log(
-			`\nTo view issues: cat .omni/state/ralph/prds/in_progress/${prdName}/test-results/report.md`,
-		);
-		console.log(`To fix issues: omnidev ralph start ${prdName}`);
+		console.log(`\nTo fix issues: omnidev ralph start ${prdName}`);
 
 		return { report, result: "failed" };
 	}

@@ -7,15 +7,17 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
-import { loadRalphConfig, runAgent } from "./lib/index.js";
+import { loadRalphConfig, runAgent, getStatusDir, ensureDirectories } from "./lib/index.js";
 import type { PRD } from "./lib/types.js";
 
-const TEST_DIR = join(process.cwd(), ".test-ralph-orchestrator");
-const RALPH_DIR = join(TEST_DIR, ".omni/state/ralph");
-const CONFIG_PATH = join(TEST_DIR, "omni.toml");
-const PRDS_DIR = join(RALPH_DIR, "prds");
+const PROJECT_NAME = "test";
+const REPO_ROOT = "/test-repo";
+let testDir: string;
+let originalXdg: string | undefined;
+let originalCwd: string;
 
 const MOCK_CONFIG = `[ralph]
+project_name = "test"
 default_agent = "test"
 default_iterations = 5
 
@@ -34,7 +36,14 @@ async function createTestPRD(
 	options: Partial<PRD> = {},
 	status: string = "pending",
 ): Promise<void> {
-	const prdDir = join(PRDS_DIR, status, name);
+	const prdDir = join(
+		getStatusDir(
+			PROJECT_NAME,
+			REPO_ROOT,
+			status as "pending" | "in_progress" | "testing" | "completed",
+		),
+		name,
+	);
 	mkdirSync(prdDir, { recursive: true });
 
 	const prd: PRD = {
@@ -54,19 +63,29 @@ async function createTestPRD(
 }
 
 beforeEach(() => {
-	mkdirSync(TEST_DIR, { recursive: true });
-	process.chdir(TEST_DIR);
-	mkdirSync(RALPH_DIR, { recursive: true });
-	mkdirSync(join(PRDS_DIR, "pending"), { recursive: true });
-	mkdirSync(join(PRDS_DIR, "testing"), { recursive: true });
-	mkdirSync(join(PRDS_DIR, "completed"), { recursive: true });
-	writeFileSync(CONFIG_PATH, MOCK_CONFIG);
+	testDir = join(
+		process.cwd(),
+		".test-ralph-orchestrator",
+		`test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+	);
+	mkdirSync(testDir, { recursive: true });
+	originalCwd = process.cwd();
+	process.chdir(testDir);
+	originalXdg = process.env["XDG_STATE_HOME"];
+	process.env["XDG_STATE_HOME"] = testDir;
+	ensureDirectories(PROJECT_NAME, REPO_ROOT);
+	writeFileSync(join(testDir, "omni.toml"), MOCK_CONFIG);
 });
 
 afterEach(() => {
-	process.chdir(join(TEST_DIR, ".."));
-	if (existsSync(TEST_DIR)) {
-		rmSync(TEST_DIR, { recursive: true, force: true });
+	process.chdir(originalCwd);
+	if (originalXdg !== undefined) {
+		process.env["XDG_STATE_HOME"] = originalXdg;
+	} else {
+		delete process.env["XDG_STATE_HOME"];
+	}
+	if (existsSync(testDir)) {
+		rmSync(testDir, { recursive: true, force: true });
 	}
 });
 
@@ -82,13 +101,13 @@ it("loads valid config", async () => {
 });
 
 it("throws if config doesn't exist", async () => {
-	rmSync(CONFIG_PATH);
+	rmSync(join(testDir, "omni.toml"));
 
 	await assert.rejects(loadRalphConfig(), /Configuration file not found/);
 });
 
 it("throws if config is invalid", async () => {
-	writeFileSync(CONFIG_PATH, "invalid toml");
+	writeFileSync(join(testDir, "omni.toml"), "invalid toml");
 
 	await assert.rejects(loadRalphConfig());
 });
@@ -127,7 +146,10 @@ it("returns exit code on failure", async () => {
 it("throws if PRD doesn't exist", async () => {
 	const { runOrchestration } = await import("./lib/index.js");
 
-	await assert.rejects(runOrchestration("nonexistent"), /PRD not found: nonexistent/);
+	await assert.rejects(
+		runOrchestration(PROJECT_NAME, REPO_ROOT, "nonexistent"),
+		/PRD not found: nonexistent/,
+	);
 });
 
 it("stops when blocked stories exist", async () => {
@@ -148,7 +170,7 @@ it("stops when blocked stories exist", async () => {
 	const { runOrchestration } = await import("./lib/index.js");
 
 	// Should stop immediately due to blocked story
-	await runOrchestration("blocked-prd");
+	await runOrchestration(PROJECT_NAME, REPO_ROOT, "blocked-prd");
 
 	// No crash = success
 });
@@ -171,7 +193,7 @@ it("completes when no stories remain", async () => {
 	const { runOrchestration } = await import("./lib/index.js");
 
 	// Should complete immediately without running agent
-	await runOrchestration("completed-prd");
+	await runOrchestration(PROJECT_NAME, REPO_ROOT, "completed-prd");
 
 	// No crash = success
 });

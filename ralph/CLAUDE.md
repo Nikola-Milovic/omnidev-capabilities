@@ -28,6 +28,7 @@ ralph/
 │   ├── verification.ts   # Verification checklist generation
 │   ├── documentation.ts  # Doc update utilities
 │   ├── core/
+│   │   ├── paths.ts      # XDG state path resolution, atomicWrite
 │   │   ├── config.ts     # Config loader (smol-toml, getReviewConfig)
 │   │   ├── logger.ts     # Logger with multiple outputs
 │   │   ├── prd-store.ts  # PRDStore class (CRUD + transitions)
@@ -57,6 +58,7 @@ ralph/
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
+| State paths | lib/core/paths.ts | XDG path resolution, project key, atomicWrite |
 | Config loading | lib/core/config.ts | smol-toml based, getReviewConfig() fills defaults |
 | Agent spawning | lib/orchestration/agent-runner.ts | AgentRunner class with stream-json parsing |
 | Iteration logic | lib/orchestration/engine.ts | OrchestrationEngine.runDevelopment() |
@@ -86,7 +88,7 @@ ralph/
 - Enabled by default; disable with `[ralph.review] enabled = false`
 - Review agents are read-only (disallowedTools: Write, Edit) — only the fix agent can modify code
 - External review (codex, etc.) reuses agent config from `[ralph.agents.*]`
-- Review results saved to `.omni/state/ralph/prds/<status>/<prd>/review-results/`
+- Review results saved to `$XDG_STATE_HOME/omnidev/ralph/<project>/prds/<status>/<prd>/review-results/`
 - Review is best-effort — failures log warnings and proceed to testing
 
 **Agent Interaction:**
@@ -97,9 +99,12 @@ ralph/
 - Agent prompts include: spec content (truncated to 3k chars), recent progress (20 lines), patterns
 
 **State Management:**
-- PRD folders: `.omni/state/ralph/prds/<status>/<name>/` with prd.json, spec.md, progress.txt
+- State stored at `$XDG_STATE_HOME/omnidev/ralph/<project>/` (defaults to `~/.local/state/...`)
+- PRD folders: `prds/<status>/<name>/` with prd.json, spec.md, progress.txt
 - Review results: `review-results/first-review.md`, `second-review.md`, `external-review.md`
+- Runner state: `runner.json` in project state dir
 - Story status: pending → in_progress → completed/blocked
+- `project_name` required in config (slug format: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 ## ANTI-PATTERNS
 

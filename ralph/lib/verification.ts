@@ -5,28 +5,34 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { findPRDLocation, getPRD, getProgress, getSpec } from "./state.js";
 import type { AgentConfig } from "./types.js";
-
-const RALPH_DIR = ".omni/state/ralph";
-const PRDS_DIR = join(RALPH_DIR, "prds");
+import { getStatusDir, atomicWrite } from "./core/paths.js";
 
 /**
  * Get the path to the verification file
  */
-export function getVerificationPath(prdName: string): string | null {
-	const status = findPRDLocation(prdName);
+export function getVerificationPath(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): string | null {
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) return null;
-	return join(process.cwd(), PRDS_DIR, status, prdName, "verification.md");
+	return join(getStatusDir(projectName, repoRoot, status), prdName, "verification.md");
 }
 
 /**
  * Get the verification file content
  */
-export async function getVerification(prdName: string): Promise<string> {
-	const verificationPath = getVerificationPath(prdName);
+export async function getVerification(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<string> {
+	const verificationPath = getVerificationPath(projectName, repoRoot, prdName);
 
 	if (!verificationPath || !existsSync(verificationPath)) {
 		throw new Error(`Verification file not found for PRD: ${prdName}`);
@@ -38,31 +44,40 @@ export async function getVerification(prdName: string): Promise<string> {
 /**
  * Check if verification file exists
  */
-export function hasVerification(prdName: string): boolean {
-	const verificationPath = getVerificationPath(prdName);
+export function hasVerification(projectName: string, repoRoot: string, prdName: string): boolean {
+	const verificationPath = getVerificationPath(projectName, repoRoot, prdName);
 	return verificationPath !== null && existsSync(verificationPath);
 }
 
 /**
  * Save verification content to file
  */
-export async function saveVerification(prdName: string, content: string): Promise<void> {
-	const verificationPath = getVerificationPath(prdName);
+export async function saveVerification(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	content: string,
+): Promise<void> {
+	const verificationPath = getVerificationPath(projectName, repoRoot, prdName);
 	if (!verificationPath) {
 		throw new Error(`PRD not found: ${prdName}`);
 	}
-	await writeFile(verificationPath, content);
+	await atomicWrite(verificationPath, content);
 }
 
 /**
  * Generate the prompt for verification generation
  */
-export async function generateVerificationPrompt(prdName: string): Promise<string> {
-	const prd = await getPRD(prdName);
-	const progressContent = await getProgress(prdName);
+export async function generateVerificationPrompt(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<string> {
+	const prd = await getPRD(projectName, repoRoot, prdName);
+	const progressContent = await getProgress(projectName, repoRoot, prdName);
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}
@@ -163,6 +178,8 @@ Be concise but thorough. Focus on what needs to be verified, not how to verify i
  * Generate verification.md for a PRD using an agent
  */
 export async function generateVerification(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	agentConfig: AgentConfig,
 	runAgentFn: (
@@ -170,7 +187,7 @@ export async function generateVerification(
 		config: AgentConfig,
 	) => Promise<{ output: string; exitCode: number }>,
 ): Promise<string> {
-	const prompt = await generateVerificationPrompt(prdName);
+	const prompt = await generateVerificationPrompt(projectName, repoRoot, prdName);
 	const { output, exitCode } = await runAgentFn(prompt, agentConfig);
 
 	if (exitCode !== 0) {
@@ -178,8 +195,6 @@ export async function generateVerification(
 	}
 
 	// Extract markdown content from output
-	// The agent should output the markdown directly, but we'll try to extract it
-	// in case there's extra text
 	let verificationContent = output;
 
 	// Try to find markdown content starting with "# Verification"
@@ -189,7 +204,7 @@ export async function generateVerification(
 	}
 
 	// Save the verification file
-	await saveVerification(prdName, verificationContent);
+	await saveVerification(projectName, repoRoot, prdName, verificationContent);
 
 	return verificationContent;
 }
@@ -197,8 +212,12 @@ export async function generateVerification(
 /**
  * Generate a simple verification checklist without LLM (fallback)
  */
-export async function generateSimpleVerification(prdName: string): Promise<string> {
-	const prd = await getPRD(prdName);
+export async function generateSimpleVerification(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<string> {
+	const prd = await getPRD(projectName, repoRoot, prdName);
 
 	const lines: string[] = [];
 	lines.push(`# Verification Checklist: ${prd.name}`);
@@ -242,6 +261,6 @@ export async function generateSimpleVerification(prdName: string): Promise<strin
 	lines.push("");
 
 	const content = lines.join("\n");
-	await saveVerification(prdName, content);
+	await saveVerification(projectName, repoRoot, prdName, content);
 	return content;
 }

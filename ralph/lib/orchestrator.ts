@@ -31,6 +31,8 @@ import type { AgentConfig, RalphConfig, Story } from "./types.js";
 import { loadConfig } from "./core/config.js";
 
 // Track current state for Ctrl+C handler
+let currentProjectName: string | null = null;
+let currentRepoRoot: string | null = null;
 let currentPrdName: string | null = null;
 let currentStory: Story | null = null;
 let isShuttingDown = false;
@@ -329,9 +331,9 @@ async function handleShutdown(): Promise<void> {
 
 	console.log("\n\nInterrupted! Saving state...");
 
-	if (currentPrdName && currentStory) {
+	if (currentPrdName && currentStory && currentProjectName && currentRepoRoot) {
 		// Update lastRun in PRD
-		await updateLastRun(currentPrdName, {
+		await updateLastRun(currentProjectName, currentRepoRoot, currentPrdName, {
 			timestamp: new Date().toISOString(),
 			storyId: currentStory.id,
 			reason: "user_interrupted",
@@ -347,7 +349,12 @@ async function handleShutdown(): Promise<void> {
 /**
  * Runs the orchestration loop for a PRD.
  */
-export async function runOrchestration(prdName: string, agentOverride?: string): Promise<void> {
+export async function runOrchestration(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	agentOverride?: string,
+): Promise<void> {
 	const config = await loadRalphConfig();
 
 	const agentName = agentOverride ?? config.default_agent;
@@ -362,6 +369,8 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 	}
 
 	// Set up Ctrl+C handler
+	currentProjectName = projectName;
+	currentRepoRoot = repoRoot;
 	currentPrdName = prdName;
 	process.on("SIGINT", handleShutdown);
 	process.on("SIGTERM", handleShutdown);
@@ -372,10 +381,10 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 	console.log(`Press Ctrl+C to stop\n`);
 
 	// Mark PRD as started (records timestamp on first run)
-	await markPRDStarted(prdName);
+	await markPRDStarted(projectName, repoRoot, prdName);
 
 	// Check for blocked stories first
-	const blocked = await hasBlockedStories(prdName);
+	const blocked = await hasBlockedStories(projectName, repoRoot, prdName);
 	if (blocked.length > 0) {
 		console.log("🚫 Blocked stories found:\n");
 		for (const story of blocked) {
@@ -406,21 +415,21 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 		console.log(`\n=== Iteration ${i + 1}/${maxIterations} ===`);
 
 		// Get current PRD and next story
-		const prd = await getPRD(prdName);
-		const story = await getNextStory(prdName);
+		const prd = await getPRD(projectName, repoRoot, prdName);
+		const story = await getNextStory(projectName, repoRoot, prdName);
 
 		if (!story) {
 			console.log("All stories complete!");
 
 			// Mark PRD as completed
-			await markPRDCompleted(prdName);
+			await markPRDCompleted(projectName, repoRoot, prdName);
 
 			// Extract findings and move to testing
 			console.log("Extracting findings...");
-			await extractAndSaveFindings(prdName);
+			await extractAndSaveFindings(projectName, repoRoot, prdName);
 
 			console.log("Moving PRD to testing...");
-			await movePRD(prdName, "testing");
+			await movePRD(projectName, repoRoot, prdName, "testing");
 
 			// Generate verification checklist
 			console.log("Generating verification checklist...");
@@ -429,18 +438,18 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 					"./verification.js"
 				);
 				try {
-					await generateVerification(prdName, agentConfig, runAgent);
+					await generateVerification(projectName, repoRoot, prdName, agentConfig, runAgent);
 					console.log("Verification checklist generated with LLM.");
 				} catch {
 					console.log("LLM generation failed, using simple generator...");
-					await generateSimpleVerification(prdName);
+					await generateSimpleVerification(projectName, repoRoot, prdName);
 				}
 			} catch (error) {
 				console.log(`Warning: Could not generate verification checklist: ${error}`);
 			}
 
 			// Update lastRun
-			await updateLastRun(prdName, {
+			await updateLastRun(projectName, repoRoot, prdName, {
 				timestamp: new Date().toISOString(),
 				storyId: "ALL",
 				reason: "completed",
@@ -465,11 +474,11 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 				`⚠️  Story ${story.id} has been in_progress for ${iterationCount} iterations without completing.`,
 			);
 			console.log("Auto-blocking story for manual review.");
-			await updateStoryStatus(prdName, story.id, "blocked", [
+			await updateStoryStatus(projectName, repoRoot, prdName, story.id, "blocked", [
 				`Story has been attempted ${iterationCount} times without successful completion. Please review the implementation and acceptance criteria.`,
 			]);
 
-			await updateLastRun(prdName, {
+			await updateLastRun(projectName, repoRoot, prdName, {
 				timestamp: new Date().toISOString(),
 				storyId: story.id,
 				reason: "blocked",
@@ -480,20 +489,20 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 		}
 
 		// Mark story as in_progress and increment iteration count
-		await updateStoryStatus(prdName, story.id, "in_progress");
+		await updateStoryStatus(projectName, repoRoot, prdName, story.id, "in_progress");
 
 		// Update iteration count in the story
-		const prdForIterationUpdate = await getPRD(prdName);
+		const prdForIterationUpdate = await getPRD(projectName, repoRoot, prdName);
 		const storyToUpdate = prdForIterationUpdate.stories.find((s) => s.id === story.id);
 		if (storyToUpdate) {
 			storyToUpdate.iterationCount = iterationCount;
-			await savePRD(prdName, prdForIterationUpdate);
+			await savePRD(projectName, repoRoot, prdName, prdForIterationUpdate);
 		}
 
 		console.log(`Working on: ${story.id} - ${story.title} (iteration ${iterationCount})`);
 
 		// Generate prompt
-		const prompt = await generatePrompt(prd, story, prdName);
+		const prompt = await generatePrompt(projectName, repoRoot, prd, story, prdName);
 
 		// Run agent with streaming output
 		console.log("Spawning agent...\n");
@@ -503,13 +512,13 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 		console.log(`\n--- Exit Code: ${exitCode} ---\n`);
 
 		// Track iteration
-		await updateMetrics(prdName, { iterations: 1 });
+		await updateMetrics(projectName, repoRoot, prdName, { iterations: 1 });
 
 		// Try to parse token usage from Claude Code output
 		const inputMatch = output.match(/Input:\s*([\d,]+)/i);
 		const outputMatch = output.match(/Output:\s*([\d,]+)/i);
 		if (inputMatch?.[1] || outputMatch?.[1]) {
-			await updateMetrics(prdName, {
+			await updateMetrics(projectName, repoRoot, prdName, {
 				inputTokens: inputMatch?.[1] ? Number.parseInt(inputMatch[1].replace(/,/g, ""), 10) : 0,
 				outputTokens: outputMatch?.[1] ? Number.parseInt(outputMatch[1].replace(/,/g, ""), 10) : 0,
 			});
@@ -520,18 +529,18 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 			console.log("Agent signaled completion!");
 
 			// Check if ALL stories are actually completed
-			const allComplete = await isPRDComplete(prdName);
+			const allComplete = await isPRDComplete(projectName, repoRoot, prdName);
 
 			if (allComplete) {
 				// Mark PRD as completed
-				await markPRDCompleted(prdName);
+				await markPRDCompleted(projectName, repoRoot, prdName);
 
 				// Extract findings and move to testing
 				console.log("Extracting findings...");
-				await extractAndSaveFindings(prdName);
+				await extractAndSaveFindings(projectName, repoRoot, prdName);
 
 				console.log("Moving PRD to testing...");
-				await movePRD(prdName, "testing");
+				await movePRD(projectName, repoRoot, prdName, "testing");
 
 				// Generate verification checklist
 				console.log("Generating verification checklist...");
@@ -540,17 +549,17 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 						"./verification.js"
 					);
 					try {
-						await generateVerification(prdName, agentConfig, runAgent);
+						await generateVerification(projectName, repoRoot, prdName, agentConfig, runAgent);
 						console.log("Verification checklist generated with LLM.");
 					} catch {
 						console.log("LLM generation failed, using simple generator...");
-						await generateSimpleVerification(prdName);
+						await generateSimpleVerification(projectName, repoRoot, prdName);
 					}
 				} catch (error) {
 					console.log(`Warning: Could not generate verification checklist: ${error}`);
 				}
 
-				await updateLastRun(prdName, {
+				await updateLastRun(projectName, repoRoot, prdName, {
 					timestamp: new Date().toISOString(),
 					storyId: "ALL",
 					reason: "completed",
@@ -563,7 +572,7 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 				console.log(`  omnidev ralph prd ${prdName} --move in_progress # if issues found`);
 			} else {
 				// Agent signaled completion but there are still pending stories
-				await updateLastRun(prdName, {
+				await updateLastRun(projectName, repoRoot, prdName, {
 					timestamp: new Date().toISOString(),
 					storyId: story.id,
 					reason: "story_completed",
@@ -575,7 +584,7 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 		}
 
 		// Check if story was marked as completed or blocked
-		const updatedPrd = await getPRD(prdName);
+		const updatedPrd = await getPRD(projectName, repoRoot, prdName);
 		const updatedStory = updatedPrd.stories.find((s) => s.id === story.id);
 
 		if (updatedStory?.status === "completed") {
@@ -584,10 +593,10 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 			// Reset iteration count on completion
 			if (updatedStory.iterationCount && updatedStory.iterationCount > 0) {
 				updatedStory.iterationCount = 0;
-				await savePRD(prdName, updatedPrd);
+				await savePRD(projectName, repoRoot, prdName, updatedPrd);
 			}
 
-			await updateLastRun(prdName, {
+			await updateLastRun(projectName, repoRoot, prdName, {
 				timestamp: new Date().toISOString(),
 				storyId: story.id,
 				reason: "story_completed",
@@ -605,7 +614,7 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 				);
 			}
 
-			await updateLastRun(prdName, {
+			await updateLastRun(projectName, repoRoot, prdName, {
 				timestamp: new Date().toISOString(),
 				storyId: story.id,
 				reason: "blocked",
@@ -621,11 +630,11 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 
 			if (inferredStatus === "completed") {
 				console.log(`Inferred from output: story completed. Updating PRD...`);
-				await updateStoryStatus(prdName, story.id, "completed");
+				await updateStoryStatus(projectName, repoRoot, prdName, story.id, "completed");
 				console.log(`✓ Story ${story.id} marked as completed`);
 			} else if (inferredStatus === "blocked") {
 				console.log(`Inferred from output: story blocked. Updating PRD...`);
-				await updateStoryStatus(prdName, story.id, "blocked", [
+				await updateStoryStatus(projectName, repoRoot, prdName, story.id, "blocked", [
 					"Agent indicated this story is blocked. Please review the output above for details.",
 				]);
 				console.log(`🚫 Story ${story.id} marked as blocked`);
@@ -644,7 +653,7 @@ export async function runOrchestration(prdName: string, agentOverride?: string):
 	console.log(`\nReached max iterations (${maxIterations})`);
 	console.log("Run 'omnidev ralph start' again to continue.");
 
-	await updateLastRun(prdName, {
+	await updateLastRun(projectName, repoRoot, prdName, {
 		timestamp: new Date().toISOString(),
 		storyId: currentStory?.id ?? "unknown",
 		reason: "user_interrupted",

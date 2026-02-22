@@ -10,16 +10,17 @@
  * - spec: Spec file commands
  * - complete: Complete a PRD (extract findings via LLM and move to completed)
  * - test: Run automated tests for a PRD
+ * - swarm: Parallel PRD execution via worktrees + tmux
  */
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { command, routes } from "@omnidev-ai/capability";
 
-const debug = (_msg: string, _ctx?: Record<string, unknown>) => {};
 import {
 	buildDependencyGraph,
 	canStartPRD,
@@ -31,11 +32,26 @@ import {
 	listPRDsByStatus,
 	movePRD,
 	unblockStory,
+	loadConfig,
 } from "./lib/index.js";
+import { getStatusDir } from "./lib/core/paths.js";
 import type { PRD, PRDStatus, Story } from "./lib/types.js";
 
-const RALPH_DIR = ".omni/state/ralph";
-const PRDS_DIR = join(RALPH_DIR, "prds");
+/**
+ * Resolve projectName + repoRoot from config and git. Cached per process.
+ */
+let _projectCtx: { projectName: string; repoRoot: string } | null = null;
+async function getProjectContext(): Promise<{ projectName: string; repoRoot: string }> {
+	if (_projectCtx) return _projectCtx;
+	const configResult = await loadConfig();
+	if (!configResult.ok) {
+		console.error(configResult.error!.message);
+		process.exit(1);
+	}
+	const repoRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+	_projectCtx = { projectName: configResult.data!.project_name, repoRoot };
+	return _projectCtx;
+}
 
 const STATUS_EMOJI: Record<PRDStatus, string> = {
 	pending: "🟡",
@@ -66,7 +82,12 @@ function formatDuration(startIso: string, endIso?: string): string {
 /**
  * Interactively prompt user to answer questions for a blocked story
  */
-async function promptForAnswers(prdName: string, story: Story): Promise<void> {
+async function promptForAnswers(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	story: Story,
+): Promise<void> {
 	console.log(`\n🚫 Story ${story.id} is blocked: ${story.title}\n`);
 	console.log("Please answer the following questions to unblock:\n");
 
@@ -84,7 +105,7 @@ async function promptForAnswers(prdName: string, story: Story): Promise<void> {
 		}
 
 		// Save answers and unblock story
-		await unblockStory(prdName, story.id, answers);
+		await unblockStory(projectName, repoRoot, prdName, story.id, answers);
 		console.log(`✅ Story ${story.id} has been unblocked!\n`);
 	} finally {
 		rl.close();
@@ -95,13 +116,13 @@ async function promptForAnswers(prdName: string, story: Story): Promise<void> {
  * List all PRDs with status summary and dependency information
  */
 export async function runList(flags: Record<string, unknown>): Promise<void> {
-	debug("runList called", { cwd: process.cwd(), PRDS_DIR });
+	const { projectName, repoRoot } = await getProjectContext();
 
 	const statusFilter =
 		typeof flags["status"] === "string" ? (flags["status"] as PRDStatus) : undefined;
 	const showAll = flags["all"] === true;
 
-	let prds = await listPRDsByStatus(statusFilter);
+	let prds = await listPRDsByStatus(projectName, repoRoot, statusFilter);
 
 	// By default, exclude completed PRDs unless --all is specified or a specific status is requested
 	if (!showAll && !statusFilter) {
@@ -122,7 +143,7 @@ export async function runList(flags: Record<string, unknown>): Promise<void> {
 	}
 
 	// Build dependency graph for all PRDs
-	const depGraph = await buildDependencyGraph();
+	const depGraph = await buildDependencyGraph(projectName, repoRoot);
 
 	console.log("\n=== Ralph PRDs ===\n");
 
@@ -149,7 +170,7 @@ export async function runList(flags: Record<string, unknown>): Promise<void> {
 	});
 
 	for (const { name, status } of sortedPrds) {
-		const prdDir = join(PRDS_DIR, status, name);
+		const prdDir = join(getStatusDir(projectName, repoRoot, status), name);
 		const prdPath = join(prdDir, "prd.json");
 
 		// Spec-only PRD (no prd.json yet — still in creation)
@@ -242,7 +263,8 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 		return;
 	}
 
-	const status = findPRDLocation(prdName);
+	const { projectName, repoRoot } = await getProjectContext();
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
 		console.error(`\nAvailable PRDs:`);
@@ -250,7 +272,7 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 		return;
 	}
 
-	const prdDir = join(PRDS_DIR, status, prdName);
+	const prdDir = join(getStatusDir(projectName, repoRoot, status), prdName);
 	const prdPath = join(prdDir, "prd.json");
 
 	// Spec-only PRD (no prd.json yet)
@@ -268,7 +290,7 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 	}
 
 	const prd: PRD = JSON.parse(await readFile(prdPath, "utf-8"));
-	const { canStart, unmetDependencies } = await canStartPRD(prdName);
+	const { canStart, unmetDependencies } = await canStartPRD(projectName, repoRoot, prdName);
 
 	console.log(`\n=== ${prd.name} ===`);
 	console.log(`Status: ${STATUS_EMOJI[status]} ${status}`);
@@ -385,7 +407,7 @@ export async function runStatus(_flags: Record<string, unknown>, prdName?: unkno
 	}
 
 	// Check for spec file
-	const specPath = join(PRDS_DIR, status, prdName, "spec.md");
+	const specPath = join(getStatusDir(projectName, repoRoot, status), prdName, "spec.md");
 	if (existsSync(specPath)) {
 		console.log(`\nSpec: ${specPath}`);
 	} else {
@@ -406,13 +428,14 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 
 	const agentOverride = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
 
-	const status = findPRDLocation(prdName);
+	const { projectName, repoRoot } = await getProjectContext();
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
 		process.exit(1);
 	}
 
-	if (!hasPRDFile(prdName)) {
+	if (!hasPRDFile(projectName, repoRoot, prdName)) {
 		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
 		console.error(`Complete the PRD creation first using /prd, then start.`);
 		process.exit(1);
@@ -430,12 +453,12 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 
 	// Move from pending to in_progress if needed
 	if (status === "pending") {
-		await movePRD(prdName, "in_progress");
+		await movePRD(projectName, repoRoot, prdName, "in_progress");
 		console.log(`Moved PRD to in_progress\n`);
 	}
 
 	// Check dependencies before starting
-	const { canStart, unmetDependencies } = await canStartPRD(prdName);
+	const { canStart, unmetDependencies } = await canStartPRD(projectName, repoRoot, prdName);
 	if (!canStart) {
 		console.error(`\n🔒 Cannot start "${prdName}" - has unmet dependencies:\n`);
 		for (const dep of unmetDependencies) {
@@ -446,8 +469,8 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 	}
 
 	// Check for blocked stories before starting
-	const { hasBlockedStories } = await import("./lib/index.js");
-	const blockedStories = await hasBlockedStories(prdName);
+	const { hasBlockedStories: hasBlockedStoriesFn } = await import("./lib/index.js");
+	const blockedStories = await hasBlockedStoriesFn(projectName, repoRoot, prdName);
 
 	if (blockedStories.length > 0) {
 		console.log(
@@ -474,7 +497,7 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 				// Prompt for answers for each blocked story
 				for (const story of blockedStories) {
 					if (story.questions.length > 0) {
-						await promptForAnswers(prdName, story);
+						await promptForAnswers(projectName, repoRoot, prdName, story);
 					}
 				}
 				console.log("All blocked stories have been addressed. Starting orchestration...\n");
@@ -492,7 +515,7 @@ export async function runStart(flags: Record<string, unknown>, prdName?: unknown
 
 	// Import and run orchestration
 	const { runOrchestration } = await import("./lib/index.js");
-	await runOrchestration(prdName, agentOverride);
+	await runOrchestration(projectName, repoRoot, prdName, agentOverride);
 }
 
 /**
@@ -509,7 +532,8 @@ export async function runProgress(
 		process.exit(1);
 	}
 
-	const content = await getProgress(prdName);
+	const { projectName, repoRoot } = await getProjectContext();
+	const content = await getProgress(projectName, repoRoot, prdName);
 	if (!content) {
 		console.log(`No progress log found for: ${prdName}`);
 		return;
@@ -534,6 +558,7 @@ export async function runPrd(flags: Record<string, unknown>, prdName?: unknown):
 		return;
 	}
 
+	const { projectName, repoRoot } = await getProjectContext();
 	const moveToStatus = flags["move"] as PRDStatus | undefined;
 	const edit = flags["edit"] as boolean | undefined;
 	const extractFindingsFlag = flags["extract-findings"] as boolean | undefined;
@@ -547,7 +572,7 @@ export async function runPrd(flags: Record<string, unknown>, prdName?: unknown):
 			process.exit(1);
 		}
 
-		const currentStatus = findPRDLocation(prdName);
+		const currentStatus = findPRDLocation(projectName, repoRoot, prdName);
 		if (!currentStatus) {
 			console.error(`PRD not found: ${prdName}`);
 			process.exit(1);
@@ -561,29 +586,29 @@ export async function runPrd(flags: Record<string, unknown>, prdName?: unknown):
 		// If moving to completed, extract findings first
 		if (moveToStatus === "completed") {
 			console.log("Extracting findings...");
-			await extractAndSaveFindings(prdName);
+			await extractAndSaveFindings(projectName, repoRoot, prdName);
 		}
 
-		await movePRD(prdName, moveToStatus);
+		await movePRD(projectName, repoRoot, prdName, moveToStatus);
 		console.log(`Moved "${prdName}" from ${currentStatus} to ${moveToStatus}`);
 		return;
 	}
 
 	// Handle --extract-findings
 	if (extractFindingsFlag) {
-		const status = findPRDLocation(prdName);
+		const status = findPRDLocation(projectName, repoRoot, prdName);
 		if (!status) {
 			console.error(`PRD not found: ${prdName}`);
 			process.exit(1);
 		}
 
-		if (!hasPRDFile(prdName)) {
+		if (!hasPRDFile(projectName, repoRoot, prdName)) {
 			console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories to extract findings from.`);
 			process.exit(1);
 		}
 
 		console.log(`Extracting findings from "${prdName}"...`);
-		await extractAndSaveFindings(prdName);
+		await extractAndSaveFindings(projectName, repoRoot, prdName);
 		console.log(`Findings extracted to PRD directory`);
 		return;
 	}
@@ -610,7 +635,8 @@ export async function runSpec(flags: Record<string, unknown>, prdName?: unknown)
 		process.exit(1);
 	}
 
-	const status = findPRDLocation(prdName);
+	const { projectName, repoRoot } = await getProjectContext();
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
 		process.exit(1);
@@ -627,7 +653,7 @@ export async function runSpec(flags: Record<string, unknown>, prdName?: unknown)
 
 	// Default: show spec content
 	try {
-		const content = await getSpec(prdName);
+		const content = await getSpec(projectName, repoRoot, prdName);
 		console.log(content);
 	} catch (e) {
 		console.error(`Error reading spec: ${e}`);
@@ -746,10 +772,12 @@ export async function runComplete(
 	_flags: Record<string, unknown>,
 	prdName?: unknown,
 ): Promise<void> {
+	const { projectName, repoRoot } = await getProjectContext();
+
 	if (!prdName || typeof prdName !== "string") {
 		console.error("Usage: omnidev ralph complete <prd-name>");
 		console.error("\nAvailable PRDs in testing:");
-		const prds = await listPRDsByStatus("testing");
+		const prds = await listPRDsByStatus(projectName, repoRoot, "testing");
 		if (prds.length === 0) {
 			console.log("  (none)");
 		} else {
@@ -760,13 +788,13 @@ export async function runComplete(
 		process.exit(1);
 	}
 
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
 		process.exit(1);
 	}
 
-	if (!hasPRDFile(prdName)) {
+	if (!hasPRDFile(projectName, repoRoot, prdName)) {
 		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
 		console.error(`Complete the PRD creation first using /prd.`);
 		process.exit(1);
@@ -797,11 +825,11 @@ export async function runComplete(
 		}
 
 		console.log("Extracting findings via LLM...");
-		await extractAndSaveFindings(prdName, agentConfig, runAgent);
+		await extractAndSaveFindings(projectName, repoRoot, prdName, agentConfig, runAgent);
 		console.log("Findings saved to PRD directory");
 
 		console.log("Moving PRD to completed...");
-		await movePRD(prdName, "completed");
+		await movePRD(projectName, repoRoot, prdName, "completed");
 
 		console.log(`\n✅ PRD "${prdName}" completed!`);
 		console.log(`\nFindings have been extracted and saved.`);
@@ -823,14 +851,16 @@ const completeCommand = command({
  * Run tests for a PRD
  */
 export async function runTest(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+	const { projectName, repoRoot } = await getProjectContext();
+
 	if (!prdName || typeof prdName !== "string") {
 		console.error("Usage: omnidev ralph test <prd-name> [--agent <agent-name>]");
 		console.error("\nAvailable PRDs in testing:");
-		const prds = await listPRDsByStatus("testing");
+		const prds = await listPRDsByStatus(projectName, repoRoot, "testing");
 		if (prds.length === 0) {
 			console.log("  (none in testing status)");
 			console.log("\nPRDs in pending:");
-			const pendingPrds = await listPRDsByStatus("pending");
+			const pendingPrds = await listPRDsByStatus(projectName, repoRoot, "pending");
 			for (const { name } of pendingPrds) {
 				console.log(`  - ${name}`);
 			}
@@ -844,13 +874,13 @@ export async function runTest(flags: Record<string, unknown>, prdName?: unknown)
 
 	const agentOverride = typeof flags["agent"] === "string" ? flags["agent"] : undefined;
 
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		console.error(`PRD not found: ${prdName}`);
 		process.exit(1);
 	}
 
-	if (!hasPRDFile(prdName)) {
+	if (!hasPRDFile(projectName, repoRoot, prdName)) {
 		console.error(`\n⚠️  PRD "${prdName}" only has a spec — no stories defined yet.`);
 		console.error(`Complete the PRD creation first using /prd.`);
 		process.exit(1);
@@ -860,7 +890,7 @@ export async function runTest(flags: Record<string, unknown>, prdName?: unknown)
 	const { runTesting } = await import("./lib/index.js");
 
 	try {
-		const { result } = await runTesting(prdName, agentOverride);
+		const { result } = await runTesting(projectName, repoRoot, prdName, agentOverride);
 
 		// Exit codes based on result
 		if (result === "verified") {
@@ -900,9 +930,10 @@ const testCommand = command({
  * Create a RunnerManager from config. Shared by all run sub-commands.
  */
 async function createRunnerManager() {
-	const { loadConfig, getRunnerConfig } = await import("./lib/index.js");
+	const { getRunnerConfig } = await import("./lib/index.js");
 	const { RunnerManager, TmuxSessionBackend } = await import("./lib/runner/index.js");
 
+	const { projectName, repoRoot } = await getProjectContext();
 	const configResult = await loadConfig();
 	if (!configResult.ok) {
 		console.error(configResult.error!.message);
@@ -910,15 +941,9 @@ async function createRunnerManager() {
 	}
 	const config = configResult.data!;
 
-	if (!config.project_name) {
-		console.error("project_name is required in [ralph] for runner commands.");
-		console.error('Add: project_name = "your-project" to [ralph] in omni.toml');
-		process.exit(1);
-	}
-
 	const runnerConfig = getRunnerConfig(config);
 	const session = new TmuxSessionBackend(runnerConfig.panes_per_window);
-	return new RunnerManager(runnerConfig, session, config.project_name);
+	return new RunnerManager(runnerConfig, session, projectName, projectName, repoRoot);
 }
 
 /**
@@ -936,9 +961,9 @@ function formatRunInstance(run: {
 	return `  ${run.prdName} [${run.status}] — ${elapsed} — pane: ${run.paneId}`;
 }
 
-async function runRunStart(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmStart(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run start <prd-name> [--agent <agent>]");
+		console.error("Usage: omnidev ralph swarm start <prd-name> [--agent <agent>]");
 		process.exit(1);
 	}
 
@@ -959,9 +984,9 @@ async function runRunStart(flags: Record<string, unknown>, prdName?: unknown): P
 	}
 }
 
-async function runRunTest(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmTest(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run test <prd-name> [--agent <agent>]");
+		console.error("Usage: omnidev ralph swarm test <prd-name> [--agent <agent>]");
 		process.exit(1);
 	}
 
@@ -977,7 +1002,7 @@ async function runRunTest(flags: Record<string, unknown>, prdName?: unknown): Pr
 	console.log(`Testing "${prdName}" — pane: ${result.data!.paneId}`);
 }
 
-async function runRunStop(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmStop(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	const manager = await createRunnerManager();
 
 	if (flags["all"] === true) {
@@ -991,7 +1016,7 @@ async function runRunStop(flags: Record<string, unknown>, prdName?: unknown): Pr
 	}
 
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run stop <prd-name> | --all");
+		console.error("Usage: omnidev ralph swarm stop <prd-name> | --all");
 		process.exit(1);
 	}
 
@@ -1003,7 +1028,7 @@ async function runRunStop(flags: Record<string, unknown>, prdName?: unknown): Pr
 	console.log(`Stopped "${prdName}".`);
 }
 
-async function runRunList(_flags: Record<string, unknown>): Promise<void> {
+async function runSwarmList(_flags: Record<string, unknown>): Promise<void> {
 	const manager = await createRunnerManager();
 	const result = await manager.list();
 
@@ -1025,9 +1050,9 @@ async function runRunList(_flags: Record<string, unknown>): Promise<void> {
 	console.log();
 }
 
-async function runRunAttach(_flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmAttach(_flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run attach <prd-name>");
+		console.error("Usage: omnidev ralph swarm attach <prd-name>");
 		process.exit(1);
 	}
 
@@ -1040,9 +1065,9 @@ async function runRunAttach(_flags: Record<string, unknown>, prdName?: unknown):
 	}
 }
 
-async function runRunLogs(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmLogs(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run logs <prd-name> [--tail <n>]");
+		console.error("Usage: omnidev ralph swarm logs <prd-name> [--tail <n>]");
 		process.exit(1);
 	}
 
@@ -1058,7 +1083,7 @@ async function runRunLogs(flags: Record<string, unknown>, prdName?: unknown): Pr
 	console.log(result.data!);
 }
 
-async function runRunMerge(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmMerge(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	const manager = await createRunnerManager();
 
 	if (flags["all"] === true) {
@@ -1081,7 +1106,7 @@ async function runRunMerge(flags: Record<string, unknown>, prdName?: unknown): P
 	}
 
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run merge <prd-name> | --all");
+		console.error("Usage: omnidev ralph swarm merge <prd-name> | --all");
 		process.exit(1);
 	}
 
@@ -1103,7 +1128,7 @@ async function runRunMerge(flags: Record<string, unknown>, prdName?: unknown): P
 	);
 }
 
-async function runRunCleanup(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
+async function runSwarmCleanup(flags: Record<string, unknown>, prdName?: unknown): Promise<void> {
 	const manager = await createRunnerManager();
 
 	if (flags["all"] === true) {
@@ -1117,7 +1142,7 @@ async function runRunCleanup(flags: Record<string, unknown>, prdName?: unknown):
 	}
 
 	if (!prdName || typeof prdName !== "string") {
-		console.error("Usage: omnidev ralph run cleanup <prd-name> | --all");
+		console.error("Usage: omnidev ralph swarm cleanup <prd-name> | --all");
 		process.exit(1);
 	}
 
@@ -1129,7 +1154,7 @@ async function runRunCleanup(flags: Record<string, unknown>, prdName?: unknown):
 	console.log(`Cleaned up "${prdName}".`);
 }
 
-async function runRunRecover(_flags: Record<string, unknown>): Promise<void> {
+async function runSwarmRecover(_flags: Record<string, unknown>): Promise<void> {
 	const manager = await createRunnerManager();
 	const result = await manager.recover();
 
@@ -1150,7 +1175,9 @@ async function runRunRecover(_flags: Record<string, unknown>): Promise<void> {
 		for (const o of r.orphaned) {
 			console.log(`  ${o.prdName} — ${o.worktree}`);
 		}
-		console.log("\nUse 'ralph run <prd>' to restart or 'ralph run cleanup <prd>' to remove.");
+		console.log(
+			"\nUse 'ralph swarm start <prd>' to restart or 'ralph swarm cleanup <prd>' to remove.",
+		);
 	}
 	if (r.cleaned.length > 0) {
 		console.log(`Cleaned stale entries: ${r.cleaned.join(", ")}`);
@@ -1160,7 +1187,7 @@ async function runRunRecover(_flags: Record<string, unknown>): Promise<void> {
 	}
 }
 
-async function runRunConflicts(_flags: Record<string, unknown>): Promise<void> {
+async function runSwarmConflicts(_flags: Record<string, unknown>): Promise<void> {
 	const manager = await createRunnerManager();
 	const result = await manager.conflicts();
 
@@ -1186,7 +1213,7 @@ async function runRunConflicts(_flags: Record<string, unknown>): Promise<void> {
 }
 
 // Build run sub-commands
-const runStartCommand = command({
+const swarmStartCommand = command({
 	brief: "Start a PRD in a new worktree + tmux pane",
 	parameters: {
 		flags: {
@@ -1194,10 +1221,10 @@ const runStartCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string" }],
 	},
-	func: runRunStart,
+	func: runSwarmStart,
 });
 
-const runTestCommand = command({
+const swarmTestCommand = command({
 	brief: "Run tests for a PRD in its worktree",
 	parameters: {
 		flags: {
@@ -1205,10 +1232,10 @@ const runTestCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string" }],
 	},
-	func: runRunTest,
+	func: runSwarmTest,
 });
 
-const runStopCommand = command({
+const swarmStopCommand = command({
 	brief: "Stop a running PRD (sends interrupt)",
 	parameters: {
 		flags: {
@@ -1216,24 +1243,24 @@ const runStopCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string", optional: true }],
 	},
-	func: runRunStop,
+	func: runSwarmStop,
 });
 
-const runListCommand = command({
+const swarmListCommand = command({
 	brief: "List all active runs with status",
 	parameters: {},
-	func: runRunList,
+	func: runSwarmList,
 });
 
-const runAttachCommand = command({
+const swarmAttachCommand = command({
 	brief: "Focus a PRD's tmux pane",
 	parameters: {
 		positional: [{ brief: "PRD name", kind: "string" }],
 	},
-	func: runRunAttach,
+	func: runSwarmAttach,
 });
 
-const runLogsCommand = command({
+const swarmLogsCommand = command({
 	brief: "View recent output from a PRD's pane",
 	parameters: {
 		flags: {
@@ -1241,10 +1268,10 @@ const runLogsCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string" }],
 	},
-	func: runRunLogs,
+	func: runSwarmLogs,
 });
 
-const runMergeCommand = command({
+const swarmMergeCommand = command({
 	brief: "Merge a PRD's branch into main",
 	parameters: {
 		flags: {
@@ -1252,10 +1279,10 @@ const runMergeCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string", optional: true }],
 	},
-	func: runRunMerge,
+	func: runSwarmMerge,
 });
 
-const runCleanupCommand = command({
+const swarmCleanupCommand = command({
 	brief: "Remove worktree + session resources without merging",
 	parameters: {
 		flags: {
@@ -1263,34 +1290,34 @@ const runCleanupCommand = command({
 		},
 		positional: [{ brief: "PRD name", kind: "string", optional: true }],
 	},
-	func: runRunCleanup,
+	func: runSwarmCleanup,
 });
 
-const runRecoverCommand = command({
+const swarmRecoverCommand = command({
 	brief: "Recover from session loss (tmux died, etc.)",
 	parameters: {},
-	func: runRunRecover,
+	func: runSwarmRecover,
 });
 
-const runConflictsCommand = command({
+const swarmConflictsCommand = command({
 	brief: "Check for merge conflicts across running PRDs",
 	parameters: {},
-	func: runRunConflicts,
+	func: runSwarmConflicts,
 });
 
-const runRoutes = routes({
+const swarmRoutes = routes({
 	brief: "Parallel PRD execution via worktrees + tmux",
 	routes: {
-		start: runStartCommand,
-		test: runTestCommand,
-		stop: runStopCommand,
-		list: runListCommand,
-		attach: runAttachCommand,
-		logs: runLogsCommand,
-		merge: runMergeCommand,
-		cleanup: runCleanupCommand,
-		recover: runRecoverCommand,
-		conflicts: runConflictsCommand,
+		start: swarmStartCommand,
+		test: swarmTestCommand,
+		stop: swarmStopCommand,
+		list: swarmListCommand,
+		attach: swarmAttachCommand,
+		logs: swarmLogsCommand,
+		merge: swarmMergeCommand,
+		cleanup: swarmCleanupCommand,
+		recover: swarmRecoverCommand,
+		conflicts: swarmConflictsCommand,
 	},
 });
 
@@ -1306,6 +1333,6 @@ export const ralphRoutes = routes({
 		spec: specCommand,
 		complete: completeCommand,
 		test: testCommand,
-		run: runRoutes,
+		swarm: swarmRoutes,
 	},
 });

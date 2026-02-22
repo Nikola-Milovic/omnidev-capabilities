@@ -1,35 +1,55 @@
 import assert from "node:assert";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
 import { sync } from "./sync.ts";
 
-const testDir = "test-ralph-sync";
+let testDir: string;
+let originalXdg: string | undefined;
+let originalCwd: string;
+
+const MOCK_CONFIG = `[ralph]
+project_name = "test"
+default_agent = "test"
+default_iterations = 5
+
+[ralph.agents.test]
+command = "echo"
+args = ["test output"]
+`;
 
 beforeEach(() => {
-	// Create test directory
+	testDir = join(
+		process.cwd(),
+		".test-ralph-sync",
+		`test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+	);
 	mkdirSync(testDir, { recursive: true });
-	// Change to test directory
+	originalCwd = process.cwd();
 	process.chdir(testDir);
+	originalXdg = process.env["XDG_STATE_HOME"];
+	process.env["XDG_STATE_HOME"] = testDir;
+	writeFileSync(join(testDir, "omni.toml"), MOCK_CONFIG);
 });
 
 afterEach(() => {
-	// Change back to original directory
-	process.chdir("..");
-	// Clean up test directory
+	process.chdir(originalCwd);
+	if (originalXdg !== undefined) {
+		process.env["XDG_STATE_HOME"] = originalXdg;
+	} else {
+		delete process.env["XDG_STATE_HOME"];
+	}
 	if (existsSync(testDir)) {
 		rmSync(testDir, { recursive: true, force: true });
 	}
 });
 
-it("creates .omni/state/ralph directory structure", async () => {
+it("creates XDG state directory structure", async () => {
 	await sync();
 
-	assert.strictEqual(existsSync(".omni/state/ralph"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/pending"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/testing"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/completed"), true);
+	// sync uses git rev-parse for repoRoot, which may differ from our constant,
+	// so verify via the dirs that ensureStateDirs creates under XDG_STATE_HOME
+	assert.strictEqual(existsSync(join(testDir, "omnidev", "ralph")), true);
 });
 
 it("is idempotent - safe to run multiple times", async () => {
@@ -37,31 +57,14 @@ it("is idempotent - safe to run multiple times", async () => {
 	await sync();
 	await sync();
 
-	assert.strictEqual(existsSync(".omni/state/ralph"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/pending"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/testing"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/completed"), true);
+	assert.strictEqual(existsSync(join(testDir, "omnidev", "ralph")), true);
 });
 
-it("handles existing directory structure gracefully", async () => {
-	mkdirSync(".omni/state/ralph/prds/pending", { recursive: true });
-	mkdirSync(".omni/state/ralph/prds/testing", { recursive: true });
-	mkdirSync(".omni/state/ralph/prds/completed", { recursive: true });
+it("does nothing without config", async () => {
+	rmSync(join(testDir, "omni.toml"));
 
 	await sync();
 
-	assert.strictEqual(existsSync(".omni/state/ralph"), true);
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/pending"), true);
-});
-
-it("preserves existing PRDs and files", async () => {
-	mkdirSync(".omni/state/ralph/prds/pending/my-prd", { recursive: true });
-	await writeFile(".omni/state/ralph/prds/pending/my-prd/prd.json", '{"name":"my-prd"}');
-
-	await sync();
-
-	assert.strictEqual(existsSync(".omni/state/ralph/prds/pending/my-prd/prd.json"), true);
-	const content = await readFile(".omni/state/ralph/prds/pending/my-prd/prd.json", "utf-8");
-	assert.strictEqual(content, '{"name":"my-prd"}');
+	// No state dirs created
+	assert.strictEqual(existsSync(join(testDir, "omnidev")), false);
 });

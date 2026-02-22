@@ -24,16 +24,18 @@ import {
  * Get the current state of a PRD
  */
 export async function getPRDState(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	hasWorktree = false,
 ): Promise<Result<StateResult>> {
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		return err(ErrorCodes.PRD_NOT_FOUND, `PRD not found: ${prdName}`);
 	}
 
 	try {
-		const prd = await getPRD(prdName);
+		const prd = await getPRD(projectName, repoRoot, prdName);
 		const displayState = computeDisplayState(status, hasWorktree);
 
 		const stories = {
@@ -44,7 +46,7 @@ export async function getPRDState(
 			pending: prd.stories.filter((s) => s.status === "pending").length,
 		};
 
-		const blockedStories = await hasBlockedStories(prdName);
+		const blockedStories = await hasBlockedStories(projectName, repoRoot, prdName);
 		const canStart = displayState === "pending" || displayState === "in_progress";
 		const canTest = displayState === "testing";
 		const canMerge = displayState === "completed";
@@ -79,15 +81,17 @@ export interface RunOptions extends OrchestratorOptions {
  * Returns structured result after completion
  */
 export async function startDevelopment(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	options: RunOptions = {},
 ): Promise<Result<StartResult>> {
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		return err(ErrorCodes.PRD_NOT_FOUND, `PRD not found: ${prdName}`);
 	}
 
-	const orchestrator = createOrchestrator();
+	const orchestrator = createOrchestrator(projectName, repoRoot);
 
 	// Collect events for result
 	let outcome: StartResult["outcome"] = "error";
@@ -129,8 +133,8 @@ export async function startDevelopment(
 		await orchestrator.runOrchestration(prdName, options);
 
 		// Get final state
-		const finalStatus = findPRDLocation(prdName) || status;
-		const prd = await getPRD(prdName);
+		const finalStatus = findPRDLocation(projectName, repoRoot, prdName) || status;
+		const prd = await getPRD(projectName, repoRoot, prdName);
 		const displayState = computeDisplayState(finalStatus, options.hasWorktree ?? true);
 
 		const storiesCompleted = prd.stories.filter((s) => s.status === "completed").length;
@@ -167,15 +171,17 @@ export async function startDevelopment(
  * Returns structured result after completion
  */
 export async function runTests(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	options: RunOptions = {},
 ): Promise<Result<TestResult>> {
-	const status = findPRDLocation(prdName);
+	const status = findPRDLocation(projectName, repoRoot, prdName);
 	if (!status) {
 		return err(ErrorCodes.PRD_NOT_FOUND, `PRD not found: ${prdName}`);
 	}
 
-	const orchestrator = createOrchestrator();
+	const orchestrator = createOrchestrator(projectName, repoRoot);
 
 	// Collect events for result
 	let outcome: TestResult["outcome"] = "unknown";
@@ -204,7 +210,7 @@ export async function runTests(
 		const result = await orchestrator.runTesting(prdName, options);
 
 		// Get final state
-		const finalStatus = findPRDLocation(prdName) || status;
+		const finalStatus = findPRDLocation(projectName, repoRoot, prdName) || status;
 		const displayState = computeDisplayState(finalStatus, options.hasWorktree ?? true);
 
 		return ok({
@@ -230,8 +236,13 @@ export async function runTests(
 /**
  * Get available actions for a PRD based on its current state
  */
-export async function getActions(prdName: string, hasWorktree = false): Promise<Result<string[]>> {
-	const stateResult = await getPRDState(prdName, hasWorktree);
+export async function getActions(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	hasWorktree = false,
+): Promise<Result<string[]>> {
+	const stateResult = await getPRDState(projectName, repoRoot, prdName, hasWorktree);
 	if (!stateResult.ok) {
 		return err(stateResult.error!.code, stateResult.error!.message);
 	}
@@ -243,11 +254,13 @@ export async function getActions(prdName: string, hasWorktree = false): Promise<
  * Check if a PRD can transition to a specific state
  */
 export async function canTransition(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	toState: PRDDisplayState,
 	hasWorktree = false,
 ): Promise<Result<boolean>> {
-	const stateResult = await getPRDState(prdName, hasWorktree);
+	const stateResult = await getPRDState(projectName, repoRoot, prdName, hasWorktree);
 	if (!stateResult.ok) {
 		return err(stateResult.error!.code, stateResult.error!.message);
 	}

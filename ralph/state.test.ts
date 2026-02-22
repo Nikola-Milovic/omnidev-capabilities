@@ -16,28 +16,29 @@ import {
 	getPRD,
 	getProgress,
 	getSpec,
+	getStatusDir,
 	hasBlockedStories,
 	isPRDComplete,
 	listPRDs,
 	listPRDsByStatus,
-	migrateToStatusFolders,
 	movePRD,
-	needsMigration,
 	updateLastRun,
 	updatePRD,
 	updateStoryStatus,
 } from "./lib/index.js";
 import type { PRD, PRDStatus } from "./lib/types.js";
 
+const PROJECT_NAME = "test";
+const REPO_ROOT = "/test-repo";
 let testDir: string;
-let originalCwd: string;
+let originalXdg: string | undefined;
 
 async function createTestPRD(
 	name: string,
 	options: Partial<PRD> = {},
 	status: PRDStatus = "pending",
 ): Promise<PRD> {
-	const prdDir = `.omni/state/ralph/prds/${status}/${name}`;
+	const prdDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, status), name);
 	mkdirSync(prdDir, { recursive: true });
 
 	const prd: PRD = {
@@ -66,13 +67,17 @@ beforeEach(() => {
 		`test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
 	);
 	mkdirSync(testDir, { recursive: true });
-	originalCwd = process.cwd();
-	process.chdir(testDir);
-	ensureDirectories();
+	originalXdg = process.env["XDG_STATE_HOME"];
+	process.env["XDG_STATE_HOME"] = testDir;
+	ensureDirectories(PROJECT_NAME, REPO_ROOT);
 });
 
 afterEach(() => {
-	process.chdir(originalCwd);
+	if (originalXdg !== undefined) {
+		process.env["XDG_STATE_HOME"] = originalXdg;
+	} else {
+		delete process.env["XDG_STATE_HOME"];
+	}
 	if (existsSync(testDir)) {
 		rmSync(testDir, { recursive: true, force: true });
 	}
@@ -81,18 +86,18 @@ afterEach(() => {
 describe("findPRDLocation", () => {
 	it("finds PRD in pending", async () => {
 		await createTestPRD("test-prd", {}, "pending");
-		const location = findPRDLocation("test-prd");
+		const location = findPRDLocation(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(location, "pending");
 	});
 
 	it("finds PRD in testing", async () => {
 		await createTestPRD("test-prd", {}, "testing");
-		const location = findPRDLocation("test-prd");
+		const location = findPRDLocation(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(location, "testing");
 	});
 
 	it("returns null for non-existent PRD", () => {
-		const location = findPRDLocation("non-existent");
+		const location = findPRDLocation(PROJECT_NAME, REPO_ROOT, "non-existent");
 		assert.strictEqual(location, null);
 	});
 });
@@ -102,7 +107,7 @@ describe("listPRDsByStatus", () => {
 		await createTestPRD("pending-prd", {}, "pending");
 		await createTestPRD("testing-prd", {}, "testing");
 
-		const prds = await listPRDsByStatus();
+		const prds = await listPRDsByStatus(PROJECT_NAME, REPO_ROOT);
 		assert.strictEqual(prds.length, 2);
 		assert.ok(prds.some((p) => p.name === "pending-prd" && p.status === "pending"));
 		assert.ok(prds.some((p) => p.name === "testing-prd" && p.status === "testing"));
@@ -112,7 +117,7 @@ describe("listPRDsByStatus", () => {
 		await createTestPRD("pending-prd", {}, "pending");
 		await createTestPRD("testing-prd", {}, "testing");
 
-		const prds = await listPRDsByStatus("pending");
+		const prds = await listPRDsByStatus(PROJECT_NAME, REPO_ROOT, "pending");
 		assert.strictEqual(prds.length, 1);
 		assert.strictEqual(prds[0]?.name, "pending-prd");
 	});
@@ -120,7 +125,7 @@ describe("listPRDsByStatus", () => {
 
 describe("listPRDs", () => {
 	it("returns empty array when no PRDs exist", async () => {
-		const prds = await listPRDs();
+		const prds = await listPRDs(PROJECT_NAME, REPO_ROOT);
 		assert.deepStrictEqual(prds, []);
 	});
 
@@ -129,7 +134,7 @@ describe("listPRDs", () => {
 		await createTestPRD("testing-prd", {}, "testing");
 		await createTestPRD("completed-prd", {}, "completed");
 
-		const prds = await listPRDs();
+		const prds = await listPRDs(PROJECT_NAME, REPO_ROOT);
 		assert.ok(prds.includes("pending-prd"));
 		assert.ok(prds.includes("testing-prd"));
 		assert.ok(prds.includes("completed-prd"));
@@ -140,21 +145,26 @@ describe("movePRD", () => {
 	it("moves PRD between status folders", async () => {
 		await createTestPRD("test-prd", {}, "pending");
 
-		await movePRD("test-prd", "testing");
+		await movePRD(PROJECT_NAME, REPO_ROOT, "test-prd", "testing");
 
-		assert.strictEqual(findPRDLocation("test-prd"), "testing");
-		assert.strictEqual(existsSync(".omni/state/ralph/prds/pending/test-prd"), false);
-		assert.strictEqual(existsSync(".omni/state/ralph/prds/testing/test-prd"), true);
+		assert.strictEqual(findPRDLocation(PROJECT_NAME, REPO_ROOT, "test-prd"), "testing");
+		const pendingDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"), "test-prd");
+		const testingDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "testing"), "test-prd");
+		assert.strictEqual(existsSync(pendingDir), false);
+		assert.strictEqual(existsSync(testingDir), true);
 	});
 
 	it("throws error for non-existent PRD", async () => {
-		await assert.rejects(movePRD("non-existent", "testing"), /PRD not found/);
+		await assert.rejects(
+			movePRD(PROJECT_NAME, REPO_ROOT, "non-existent", "testing"),
+			/PRD not found/,
+		);
 	});
 
 	it("no-op when moving to same status", async () => {
 		await createTestPRD("test-prd", {}, "pending");
-		await movePRD("test-prd", "pending");
-		assert.strictEqual(findPRDLocation("test-prd"), "pending");
+		await movePRD(PROJECT_NAME, REPO_ROOT, "test-prd", "pending");
+		assert.strictEqual(findPRDLocation(PROJECT_NAME, REPO_ROOT, "test-prd"), "pending");
 	});
 });
 
@@ -162,21 +172,24 @@ describe("getPRD", () => {
 	it("retrieves PRD from any status folder", async () => {
 		await createTestPRD("test-prd", { description: "Test PRD" }, "testing");
 
-		const retrieved = await getPRD("test-prd");
+		const retrieved = await getPRD(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(retrieved.name, "test-prd");
 		assert.strictEqual(retrieved.description, "Test PRD");
 	});
 
 	it("throws error for non-existent PRD", async () => {
-		await assert.rejects(getPRD("non-existent"), /PRD not found: non-existent/);
+		await assert.rejects(
+			getPRD(PROJECT_NAME, REPO_ROOT, "non-existent"),
+			/PRD not found: non-existent/,
+		);
 	});
 
 	it("throws error for invalid PRD structure", async () => {
-		const prdPath = ".omni/state/ralph/prds/pending/invalid-prd";
+		const prdPath = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"), "invalid-prd");
 		mkdirSync(prdPath, { recursive: true });
 		writeFileSync(join(prdPath, "prd.json"), JSON.stringify({ foo: "bar" }));
 
-		await assert.rejects(getPRD("invalid-prd"), /Invalid PRD structure/);
+		await assert.rejects(getPRD(PROJECT_NAME, REPO_ROOT, "invalid-prd"), /Invalid PRD structure/);
 	});
 });
 
@@ -184,18 +197,20 @@ describe("updatePRD", () => {
 	it("updates PRD fields", async () => {
 		await createTestPRD("test-prd", { description: "Original" });
 
-		const updated = await updatePRD("test-prd", { description: "Updated" });
+		const updated = await updatePRD(PROJECT_NAME, REPO_ROOT, "test-prd", {
+			description: "Updated",
+		});
 
 		assert.strictEqual(updated.description, "Updated");
 
-		const retrieved = await getPRD("test-prd");
+		const retrieved = await getPRD(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(retrieved.description, "Updated");
 	});
 
 	it("preserves name even if update tries to change it", async () => {
 		await createTestPRD("test-prd");
 
-		const updated = await updatePRD("test-prd", {
+		const updated = await updatePRD(PROJECT_NAME, REPO_ROOT, "test-prd", {
 			name: "different-name" as never,
 		});
 
@@ -218,7 +233,7 @@ describe("getNextStory", () => {
 			],
 		});
 
-		const story = await getNextStory("test-prd");
+		const story = await getNextStory(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(story, null);
 	});
 
@@ -244,7 +259,7 @@ describe("getNextStory", () => {
 			],
 		});
 
-		const story = await getNextStory("test-prd");
+		const story = await getNextStory(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(story?.id, "US-002");
 	});
 
@@ -270,7 +285,7 @@ describe("getNextStory", () => {
 			],
 		});
 
-		const story = await getNextStory("test-prd");
+		const story = await getNextStory(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(story?.id, "US-002");
 	});
 });
@@ -290,9 +305,9 @@ describe("updateStoryStatus", () => {
 			],
 		});
 
-		await updateStoryStatus("test-prd", "US-001", "completed");
+		await updateStoryStatus(PROJECT_NAME, REPO_ROOT, "test-prd", "US-001", "completed");
 
-		const prd = await getPRD("test-prd");
+		const prd = await getPRD(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(prd.stories[0]?.status, "completed");
 	});
 
@@ -310,9 +325,12 @@ describe("updateStoryStatus", () => {
 			],
 		});
 
-		await updateStoryStatus("test-prd", "US-001", "blocked", ["Question 1?", "Question 2?"]);
+		await updateStoryStatus(PROJECT_NAME, REPO_ROOT, "test-prd", "US-001", "blocked", [
+			"Question 1?",
+			"Question 2?",
+		]);
 
-		const prd = await getPRD("test-prd");
+		const prd = await getPRD(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(prd.stories[0]?.status, "blocked");
 		assert.deepStrictEqual(prd.stories[0]?.questions, ["Question 1?", "Question 2?"]);
 	});
@@ -320,7 +338,10 @@ describe("updateStoryStatus", () => {
 	it("throws error for non-existent story", async () => {
 		await createTestPRD("test-prd");
 
-		await assert.rejects(updateStoryStatus("test-prd", "US-999", "completed"), /Story not found/);
+		await assert.rejects(
+			updateStoryStatus(PROJECT_NAME, REPO_ROOT, "test-prd", "US-999", "completed"),
+			/Story not found/,
+		);
 	});
 });
 
@@ -328,14 +349,14 @@ describe("updateLastRun", () => {
 	it("updates lastRun field", async () => {
 		await createTestPRD("test-prd");
 
-		await updateLastRun("test-prd", {
+		await updateLastRun(PROJECT_NAME, REPO_ROOT, "test-prd", {
 			timestamp: "2025-01-10T12:00:00Z",
 			storyId: "US-001",
 			reason: "user_interrupted",
 			summary: "Stopped mid-work",
 		});
 
-		const prd = await getPRD("test-prd");
+		const prd = await getPRD(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(prd.lastRun?.storyId, "US-001");
 		assert.strictEqual(prd.lastRun?.reason, "user_interrupted");
 	});
@@ -364,7 +385,7 @@ describe("isPRDComplete", () => {
 			],
 		});
 
-		const complete = await isPRDComplete("test-prd");
+		const complete = await isPRDComplete(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(complete, true);
 	});
 
@@ -390,7 +411,7 @@ describe("isPRDComplete", () => {
 			],
 		});
 
-		const complete = await isPRDComplete("test-prd");
+		const complete = await isPRDComplete(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(complete, false);
 	});
 });
@@ -418,7 +439,7 @@ describe("hasBlockedStories", () => {
 			],
 		});
 
-		const blocked = await hasBlockedStories("test-prd");
+		const blocked = await hasBlockedStories(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(blocked.length, 1);
 		assert.strictEqual(blocked[0]?.id, "US-001");
 	});
@@ -437,7 +458,7 @@ describe("hasBlockedStories", () => {
 			],
 		});
 
-		const blocked = await hasBlockedStories("test-prd");
+		const blocked = await hasBlockedStories(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.deepStrictEqual(blocked, []);
 	});
 });
@@ -446,12 +467,12 @@ describe("getSpec", () => {
 	it("returns spec content", async () => {
 		await createTestPRD("test-prd");
 
-		const spec = await getSpec("test-prd");
+		const spec = await getSpec(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.ok(spec.includes("# Test Spec"));
 	});
 
 	it("throws error when spec missing", async () => {
-		const prdDir = ".omni/state/ralph/prds/pending/no-spec";
+		const prdDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"), "no-spec");
 		mkdirSync(prdDir, { recursive: true });
 		await writeFile(
 			join(prdDir, "prd.json"),
@@ -463,7 +484,7 @@ describe("getSpec", () => {
 			}),
 		);
 
-		await assert.rejects(getSpec("no-spec"), /Spec file not found/);
+		await assert.rejects(getSpec(PROJECT_NAME, REPO_ROOT, "no-spec"), /Spec file not found/);
 	});
 });
 
@@ -471,10 +492,10 @@ describe("appendProgress", () => {
 	it("appends content to progress log", async () => {
 		await createTestPRD("test-prd");
 
-		await appendProgress("test-prd", "## Entry 1\n- Item 1");
-		await appendProgress("test-prd", "## Entry 2\n- Item 2");
+		await appendProgress(PROJECT_NAME, REPO_ROOT, "test-prd", "## Entry 1\n- Item 1");
+		await appendProgress(PROJECT_NAME, REPO_ROOT, "test-prd", "## Entry 2\n- Item 2");
 
-		const progress = await getProgress("test-prd");
+		const progress = await getProgress(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.ok(progress.includes("## Entry 1"));
 		assert.ok(progress.includes("## Entry 2"));
 	});
@@ -483,7 +504,11 @@ describe("appendProgress", () => {
 describe("extractFindings", () => {
 	it("extracts patterns from progress.txt", async () => {
 		await createTestPRD("test-prd");
-		const progressPath = ".omni/state/ralph/prds/pending/test-prd/progress.txt";
+		const progressPath = join(
+			getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"),
+			"test-prd",
+			"progress.txt",
+		);
 		await writeFile(
 			progressPath,
 			`## Codebase Patterns
@@ -497,14 +522,18 @@ describe("extractFindings", () => {
 `,
 		);
 
-		const findings = await extractFindings("test-prd");
+		const findings = await extractFindings(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.ok(findings.includes("### Patterns"));
 		assert.ok(findings.includes("neverthrow"));
 	});
 
 	it("extracts learnings from progress.txt", async () => {
 		await createTestPRD("test-prd");
-		const progressPath = ".omni/state/ralph/prds/pending/test-prd/progress.txt";
+		const progressPath = join(
+			getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"),
+			"test-prd",
+			"progress.txt",
+		);
 		await writeFile(
 			progressPath,
 			`## Codebase Patterns
@@ -522,83 +551,21 @@ describe("extractFindings", () => {
 `,
 		);
 
-		const findings = await extractFindings("test-prd");
+		const findings = await extractFindings(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.ok(findings.includes("### Learnings"));
 		assert.ok(findings.includes("httpOnly cookies"));
 	});
 
 	it("returns empty string when no patterns or learnings", async () => {
 		await createTestPRD("test-prd");
-		const progressPath = ".omni/state/ralph/prds/pending/test-prd/progress.txt";
+		const progressPath = join(
+			getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"),
+			"test-prd",
+			"progress.txt",
+		);
 		await writeFile(progressPath, "## Progress Log\n\nNothing here\n");
 
-		const findings = await extractFindings("test-prd");
+		const findings = await extractFindings(PROJECT_NAME, REPO_ROOT, "test-prd");
 		assert.strictEqual(findings, "");
-	});
-});
-
-describe("migration", () => {
-	it("needsMigration returns true for old structure", async () => {
-		// Create old structure (PRDs directly in prds/)
-		const oldPrdDir = ".omni/state/ralph/prds/old-prd";
-		mkdirSync(oldPrdDir, { recursive: true });
-		writeFileSync(
-			join(oldPrdDir, "prd.json"),
-			JSON.stringify({
-				name: "old-prd",
-				description: "Test",
-				createdAt: new Date().toISOString(),
-				stories: [],
-			}),
-		);
-
-		assert.strictEqual(needsMigration(), true);
-	});
-
-	it("needsMigration returns false for new structure", async () => {
-		await createTestPRD("test-prd", {}, "pending");
-		assert.strictEqual(needsMigration(), false);
-	});
-
-	it("migrateToStatusFolders moves PRDs to pending", async () => {
-		// Create old structure
-		const oldPrdDir = ".omni/state/ralph/prds/migrate-test";
-		mkdirSync(oldPrdDir, { recursive: true });
-		writeFileSync(
-			join(oldPrdDir, "prd.json"),
-			JSON.stringify({
-				name: "migrate-test",
-				description: "Test",
-				createdAt: new Date().toISOString(),
-				stories: [],
-			}),
-		);
-
-		const { migrated, errors } = await migrateToStatusFolders();
-
-		assert.strictEqual(migrated, 1);
-		assert.strictEqual(errors.length, 0);
-		assert.strictEqual(findPRDLocation("migrate-test"), "pending");
-	});
-
-	it("migrateToStatusFolders handles completed-prds", async () => {
-		// Create old completed-prds structure
-		const oldCompletedDir = ".omni/state/ralph/completed-prds/2026-01-20-old-completed";
-		mkdirSync(oldCompletedDir, { recursive: true });
-		writeFileSync(
-			join(oldCompletedDir, "prd.json"),
-			JSON.stringify({
-				name: "old-completed",
-				description: "Test",
-				createdAt: new Date().toISOString(),
-				stories: [],
-			}),
-		);
-
-		const { migrated, errors } = await migrateToStatusFolders();
-
-		assert.strictEqual(migrated, 1);
-		assert.strictEqual(errors.length, 0);
-		assert.strictEqual(findPRDLocation("old-completed"), "completed");
 	});
 });

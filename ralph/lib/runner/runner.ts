@@ -8,8 +8,6 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { type Result, ok, err } from "../results.js";
 import type {
 	RunnerConfig,
@@ -26,7 +24,6 @@ import {
 	removeWorktree,
 	mergeWorktree,
 	checkMergeConflicts,
-	isStateTracked,
 	isMainWorktree,
 	resolveWorktreePath,
 	listWorktrees,
@@ -40,7 +37,7 @@ import {
 	getRun,
 	reconcile,
 } from "./state.js";
-import { findPRDLocation, hasPRDFile, canStartPRD } from "../state.js";
+import { findPRDLocation, hasPRDFile, canStartPRD, getPRD } from "../state.js";
 import type { PRD } from "../types.js";
 
 export class RunnerManager {
@@ -48,11 +45,22 @@ export class RunnerManager {
 	private session: SessionBackend;
 	private sessionName: string;
 	private cwd: string;
+	private projectName: string;
+	private repoRoot: string;
 
-	constructor(config: RunnerConfig, session: SessionBackend, sessionName: string, cwd?: string) {
+	constructor(
+		config: RunnerConfig,
+		session: SessionBackend,
+		sessionName: string,
+		projectName: string,
+		repoRoot: string,
+		cwd?: string,
+	) {
 		this.config = config;
 		this.session = session;
 		this.sessionName = sessionName;
+		this.projectName = projectName;
+		this.repoRoot = repoRoot;
 		this.cwd = cwd ?? process.cwd();
 	}
 
@@ -65,7 +73,7 @@ export class RunnerManager {
 		if (!checks.ok) return err(checks.error!.code, checks.error!.message);
 
 		// Check not already running
-		const existing = await getRun(this.cwd, prdName);
+		const existing = await getRun(this.projectName, this.repoRoot, prdName);
 		if (existing.ok && existing.data && existing.data.status === "running") {
 			return err("ALREADY_RUNNING", `PRD "${prdName}" is already running`, {
 				paneId: existing.data.paneId,
@@ -73,17 +81,12 @@ export class RunnerManager {
 			});
 		}
 
-		// Check .omni/state/ralph is tracked
-		const tracked = await isStateTracked(this.cwd);
-		if (tracked.ok && !tracked.data) {
-			return err(
-				"STATE_NOT_TRACKED",
-				`.omni/state/ralph is gitignored. Worktree-based execution requires state to be tracked in git. Remove the gitignore entry for .omni/state/ralph/ and commit.`,
-			);
-		}
-
 		// Check dependencies
-		const { canStart, unmetDependencies } = await canStartPRD(prdName);
+		const { canStart, unmetDependencies } = await canStartPRD(
+			this.projectName,
+			this.repoRoot,
+			prdName,
+		);
 		if (!canStart) {
 			return err(
 				"DEPS_UNMET",
@@ -139,7 +142,7 @@ export class RunnerManager {
 		};
 
 		// Persist to state
-		const saveResult = await upsertRun(this.cwd, this.sessionName, instance);
+		const saveResult = await upsertRun(this.projectName, this.repoRoot, this.sessionName, instance);
 		if (!saveResult.ok) return err(saveResult.error!.code, saveResult.error!.message);
 
 		return ok(instance);
@@ -149,7 +152,7 @@ export class RunnerManager {
 	 * Stop a running PRD (sends interrupt)
 	 */
 	async stop(prdName: string): Promise<Result<void>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		if (!runResult.ok) return err(runResult.error!.code, runResult.error!.message);
 		if (!runResult.data) return err("NOT_RUNNING", `PRD "${prdName}" is not running`);
 
@@ -160,14 +163,14 @@ export class RunnerManager {
 		if (!intResult.ok) return err(intResult.error!.code, intResult.error!.message);
 
 		// Update status
-		return updateRunStatus(this.cwd, prdName, "stopped");
+		return updateRunStatus(this.projectName, this.repoRoot, prdName, "stopped");
 	}
 
 	/**
 	 * Stop all running PRDs
 	 */
 	async stopAll(): Promise<Result<void>> {
-		const runsResult = await reconcile(this.cwd, this.session);
+		const runsResult = await reconcile(this.projectName, this.repoRoot, this.session);
 		if (!runsResult.ok) return err(runsResult.error!.code, runsResult.error!.message);
 
 		const running = runsResult.data!.filter((r) => r.status === "running");
@@ -182,7 +185,7 @@ export class RunnerManager {
 	 * Start testing for a PRD in its worktree
 	 */
 	async test(prdName: string, options?: TestOptions): Promise<Result<RunInstance>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		if (!runResult.ok) return err(runResult.error!.code, runResult.error!.message);
 
 		// PRD must have an existing worktree (either running or stopped)
@@ -223,7 +226,7 @@ export class RunnerManager {
 			windowId: pane.windowId,
 		};
 
-		await upsertRun(this.cwd, this.sessionName, instance);
+		await upsertRun(this.projectName, this.repoRoot, this.sessionName, instance);
 		return ok(instance);
 	}
 
@@ -231,7 +234,7 @@ export class RunnerManager {
 	 * Merge a PRD's worktree branch back into main
 	 */
 	async merge(prdName: string): Promise<Result<MergeResult>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		const worktreePath =
 			runResult.ok && runResult.data
 				? runResult.data.worktree
@@ -266,7 +269,7 @@ export class RunnerManager {
 		// Destroy pane if it exists
 		if (runResult.ok && runResult.data) {
 			await this.session.destroyPane(runResult.data.paneId).catch(() => {});
-			await removeRun(this.cwd, prdName);
+			await removeRun(this.projectName, this.repoRoot, prdName);
 		}
 
 		// Rebalance remaining panes
@@ -284,7 +287,7 @@ export class RunnerManager {
 	 * Merge all completed/stopped PRDs
 	 */
 	async mergeAll(): Promise<Result<MergeResult[]>> {
-		const runsResult = await reconcile(this.cwd, this.session);
+		const runsResult = await reconcile(this.projectName, this.repoRoot, this.session);
 		if (!runsResult.ok) return err(runsResult.error!.code, runsResult.error!.message);
 
 		const mergeable = runsResult.data!.filter(
@@ -306,7 +309,7 @@ export class RunnerManager {
 	 * Clean up a PRD's worktree and session resources (without merging)
 	 */
 	async cleanup(prdName: string): Promise<Result<void>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		const worktreePath =
 			runResult.ok && runResult.data
 				? runResult.data.worktree
@@ -325,7 +328,7 @@ export class RunnerManager {
 		}
 
 		// Remove from state
-		await removeRun(this.cwd, prdName);
+		await removeRun(this.projectName, this.repoRoot, prdName);
 
 		// Rebalance
 		await this.session.rebalance(this.sessionName).catch(() => {});
@@ -337,7 +340,7 @@ export class RunnerManager {
 	 * Clean up all stale/stopped runs
 	 */
 	async cleanupAll(): Promise<Result<void>> {
-		const runsResult = await reconcile(this.cwd, this.session);
+		const runsResult = await reconcile(this.projectName, this.repoRoot, this.session);
 		if (!runsResult.ok) return err(runsResult.error!.code, runsResult.error!.message);
 
 		const cleanable = runsResult.data!.filter(
@@ -357,7 +360,7 @@ export class RunnerManager {
 	 * Cross-references state with live session and disk to find orphans.
 	 */
 	async recover(): Promise<Result<RecoverResult>> {
-		const stateResult = await loadRunnerState(this.cwd);
+		const stateResult = await loadRunnerState(this.projectName, this.repoRoot);
 		if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 		const state = stateResult.data!;
@@ -406,7 +409,7 @@ export class RunnerManager {
 				// Check if this worktree has a PRD that's not in state
 				const inState = branch in state.runs;
 				if (!inState) {
-					const prdLocation = findPRDLocation(branch);
+					const prdLocation = findPRDLocation(this.projectName, this.repoRoot, branch);
 					if (prdLocation) {
 						result.orphaned.push({
 							prdName: branch,
@@ -419,7 +422,8 @@ export class RunnerManager {
 		}
 
 		// Save updated state
-		await import("./state.js").then((s) => s.saveRunnerState(this.cwd, state));
+		const { saveRunnerState: saveState } = await import("./state.js");
+		await saveState(this.projectName, this.repoRoot, state);
 
 		return ok(result);
 	}
@@ -428,14 +432,14 @@ export class RunnerManager {
 	 * List all run instances with live status reconciliation
 	 */
 	async list(): Promise<Result<RunInstance[]>> {
-		return reconcile(this.cwd, this.session);
+		return reconcile(this.projectName, this.repoRoot, this.session);
 	}
 
 	/**
 	 * Get a single run instance
 	 */
 	async get(prdName: string): Promise<Result<RunInstance>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		if (!runResult.ok) return err(runResult.error!.code, runResult.error!.message);
 		if (!runResult.data) return err("NOT_RUNNING", `No run found for PRD: ${prdName}`);
 		return ok(runResult.data);
@@ -445,7 +449,7 @@ export class RunnerManager {
 	 * Check for merge conflicts across all running PRDs
 	 */
 	async conflicts(): Promise<Result<ConflictReport[]>> {
-		const runsResult = await reconcile(this.cwd, this.session);
+		const runsResult = await reconcile(this.projectName, this.repoRoot, this.session);
 		if (!runsResult.ok) return err(runsResult.error!.code, runsResult.error!.message);
 
 		const reports: ConflictReport[] = [];
@@ -469,7 +473,7 @@ export class RunnerManager {
 	 * Attach to a PRD's pane (interactive — delegates to session backend)
 	 */
 	async attach(prdName: string): Promise<Result<void>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		if (!runResult.ok) return err(runResult.error!.code, runResult.error!.message);
 		if (!runResult.data) return err("NOT_RUNNING", `No run found for PRD: ${prdName}`);
 
@@ -480,7 +484,7 @@ export class RunnerManager {
 	 * Get recent log output from a PRD's pane
 	 */
 	async logs(prdName: string, tail = 100): Promise<Result<string>> {
-		const runResult = await getRun(this.cwd, prdName);
+		const runResult = await getRun(this.projectName, this.repoRoot, prdName);
 		if (!runResult.ok) return err(runResult.error!.code, runResult.error!.message);
 		if (!runResult.data) return err("NOT_RUNNING", `No run found for PRD: ${prdName}`);
 
@@ -515,13 +519,13 @@ export class RunnerManager {
 		}
 
 		// PRD must exist
-		const prdLocation = findPRDLocation(prdName);
+		const prdLocation = findPRDLocation(this.projectName, this.repoRoot, prdName);
 		if (!prdLocation) {
 			return err("PRD_NOT_FOUND", `PRD "${prdName}" not found`);
 		}
 
 		// PRD must have prd.json (not spec-only)
-		if (!hasPRDFile(prdName)) {
+		if (!hasPRDFile(this.projectName, this.repoRoot, prdName)) {
 			return err(
 				"PRD_INVALID_STATUS",
 				`PRD "${prdName}" only has a spec — stories must be defined before running`,
@@ -533,22 +537,18 @@ export class RunnerManager {
 }
 
 /**
- * Convenience: read prd.json from a worktree path
+ * Convenience: read prd.json from central XDG state (not worktree-local)
  */
-export async function readWorktreePRD(worktreePath: string, prdName: string): Promise<Result<PRD>> {
-	// Search all status dirs in the worktree
-	const statusDirs = ["pending", "in_progress", "testing", "completed"];
-	for (const status of statusDirs) {
-		const prdPath = join(worktreePath, ".omni/state/ralph/prds", status, prdName, "prd.json");
-		if (existsSync(prdPath)) {
-			try {
-				const content = await readFile(prdPath, "utf-8");
-				return ok(JSON.parse(content) as PRD);
-			} catch (error) {
-				const msg = error instanceof Error ? error.message : String(error);
-				return err("PRD_READ_FAILED", msg);
-			}
-		}
+export async function readWorktreePRD(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<Result<PRD>> {
+	try {
+		const prd = await getPRD(projectName, repoRoot, prdName);
+		return ok(prd);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		return err("PRD_NOT_FOUND", msg);
 	}
-	return err("PRD_NOT_FOUND", `prd.json not found in worktree for "${prdName}"`);
 }

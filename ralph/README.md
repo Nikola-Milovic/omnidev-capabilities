@@ -12,7 +12,7 @@ omnidev add cap --github frmlabz/omnidev-capabilities --path ralph
 omnidev sync
 ```
 
-This creates the Ralph directory structure at `.omni/state/ralph/`.
+This creates the Ralph directory structure at `$XDG_STATE_HOME/omnidev/ralph/<project>/` (defaults to `~/.local/state/omnidev/ralph/<project>/`).
 
 After setup, add the `[ralph]` configuration to your `omni.toml` file (see Configuration section below).
 
@@ -43,6 +43,44 @@ omnidev ralph complete <prd-name>
 # Move PRD between states manually
 omnidev ralph prd <prd-name> --move <status>
 ```
+
+## Parallel Execution (Swarm)
+
+Run multiple PRDs in parallel using git worktrees and tmux sessions:
+
+```bash
+# Start a PRD in a worktree + tmux session
+omnidev ralph swarm start <prd-name> [--agent <agent>]
+
+# Start test agent in a worktree
+omnidev ralph swarm test <prd-name> [--agent <agent>]
+
+# List running swarm sessions
+omnidev ralph swarm list
+
+# Attach to a running session
+omnidev ralph swarm attach <prd-name>
+
+# View logs
+omnidev ralph swarm logs <prd-name> [--tail <n>]
+
+# Stop a session (or all)
+omnidev ralph swarm stop <prd-name> | --all
+
+# Merge worktree changes back
+omnidev ralph swarm merge <prd-name> | --all
+
+# Show merge conflicts
+omnidev ralph swarm conflicts <prd-name>
+
+# Clean up worktree + session
+omnidev ralph swarm cleanup <prd-name> | --all
+
+# Recover orphaned worktrees
+omnidev ralph swarm recover
+```
+
+Each swarm session runs in an isolated git worktree, so multiple PRDs can be developed simultaneously without conflicts.
 
 ## PRD Lifecycle
 
@@ -164,7 +202,7 @@ The external tool receives a simplified review prompt with the git diff and acce
 
 ### Review Results
 
-Review results are saved to `.omni/state/ralph/prds/<status>/<prd-name>/review-results/`:
+Review results are saved to `<state-dir>/prds/<status>/<prd-name>/review-results/`:
 - `first-review.md` — Phase 1 results
 - `external-review.md` — Phase 2 results (if external tool configured)
 - `second-review.md` — Phase 3 results
@@ -228,6 +266,7 @@ Configuration lives in `omni.toml` under the `[ralph]` section:
 
 ```toml
 [ralph]
+project_name = "my-app"       # Required. Slug format: lowercase, hyphens, no leading/trailing hyphens.
 default_agent = "claude"
 default_iterations = 10
 
@@ -409,7 +448,7 @@ echo "[ralph:$PRD_NAME] Teardown complete!"
 
 ## PRD Structure
 
-Each PRD lives in `.omni/state/ralph/prds/<status>/<prd-name>/` with these files:
+Each PRD lives in `<state-dir>/prds/<status>/<prd-name>/` with these files:
 
 | File | Description |
 |------|-------------|
@@ -452,7 +491,7 @@ playwriter -s 1 -e "await state.myPage.screenshot({ path: 'test-results/screensh
 
 ## Findings
 
-When completing a PRD, Ralph extracts patterns and learnings into `.omni/state/ralph/findings.md`. This serves as institutional knowledge for the codebase.
+When completing a PRD, Ralph extracts patterns and learnings into `<state-dir>/findings.md`. This serves as institutional knowledge for the codebase.
 
 ## Dependencies
 
@@ -486,8 +525,8 @@ omnidev ralph start my-feature  # Fix the issues
 # Back to step 3
 
 # 5. View completed PRD findings
-cat .omni/state/ralph/findings.md
+# Findings are at $XDG_STATE_HOME/omnidev/ralph/<project>/findings.md
 
 # 6. View review results
-cat .omni/state/ralph/prds/completed/my-feature/review-results/first-review.md
+# Review results are at $XDG_STATE_HOME/omnidev/ralph/<project>/prds/completed/my-feature/review-results/
 ```

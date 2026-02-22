@@ -25,7 +25,7 @@ When a user invokes this skill:
 
 ### 1. Read the Findings File
 
-Read `.omni/state/ralph/findings.md` to see all accumulated findings from completed PRDs.
+Read the Ralph findings file to see all accumulated findings from completed PRDs. The findings file is at `$XDG_STATE_HOME/omnidev/ralph/<project>/findings.md` (defaults to `~/.local/state/omnidev/ralph/<project>/findings.md`).
 
 If the file doesn't exist or is empty, inform the user there are no findings to consolidate.
 
@@ -105,7 +105,7 @@ Create or update `OMNI.md` with the consolidated patterns. Use this structure:
 After successfully updating OMNI.md, clear the findings file:
 
 ```bash
-echo "# Ralph Findings\n\n" > .omni/state/ralph/findings.md
+echo "# Ralph Findings\n\n" > "$XDG_STATE_HOME/omnidev/ralph/<project>/findings.md"
 ```
 
 This prevents the same findings from being processed again.

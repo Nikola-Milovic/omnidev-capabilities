@@ -44,13 +44,13 @@ export class Orchestrator extends EventEmitter {
 	private isRunning = false;
 	private abortController: AbortController | null = null;
 
-	constructor() {
+	constructor(projectName: string, repoRoot: string) {
 		super();
 		// Create engine with a no-op logger to avoid duplicate console output
 		// (events are emitted via onEvent callback instead)
 		const silentLogger = new Logger();
 		// Don't add any outputs - logs go via events only
-		this.engine = new OrchestrationEngine({ logger: silentLogger });
+		this.engine = new OrchestrationEngine({ projectName, repoRoot, logger: silentLogger });
 	}
 
 	/**
@@ -159,6 +159,6 @@ export class Orchestrator extends EventEmitter {
 /**
  * Create a new orchestrator instance
  */
-export function createOrchestrator(): Orchestrator {
-	return new Orchestrator();
+export function createOrchestrator(projectName: string, repoRoot: string): Orchestrator {
+	return new Orchestrator(projectName, repoRoot);
 }

@@ -42,6 +42,8 @@ import { ReviewEngine } from "./review-engine.js";
  * Engine context - dependencies injected into the engine
  */
 export interface EngineContext {
+	projectName: string;
+	repoRoot: string;
 	store: PRDStore;
 	runner: AgentRunner;
 	logger: Logger;
@@ -115,9 +117,14 @@ export interface TestRunResult {
 export class OrchestrationEngine {
 	private ctx: EngineContext;
 
-	constructor(ctx: Partial<EngineContext> = {}) {
+	constructor(
+		ctx: Pick<EngineContext, "projectName" | "repoRoot"> &
+			Partial<Omit<EngineContext, "projectName" | "repoRoot">>,
+	) {
 		this.ctx = {
-			store: ctx.store ?? getDefaultStore(),
+			projectName: ctx.projectName,
+			repoRoot: ctx.repoRoot,
+			store: ctx.store ?? getDefaultStore(ctx.projectName, ctx.repoRoot),
 			runner: ctx.runner ?? getAgentRunner(),
 			logger: ctx.logger ?? getLogger(),
 			signal: ctx.signal,
@@ -273,7 +280,13 @@ export class OrchestrationEngine {
 			log("info", `Working on: ${story.id} - ${story.title} (iteration ${iterationCount})`);
 
 			// Generate and run
-			const prompt = await generatePrompt(prd, story, prdName);
+			const prompt = await generatePrompt(
+				this.ctx.projectName,
+				this.ctx.repoRoot,
+				prd,
+				story,
+				prdName,
+			);
 			const result = await this.ctx.runner.run(prompt, agentConfig, {
 				stream: true,
 				signal,
@@ -378,7 +391,7 @@ export class OrchestrationEngine {
 		signal?: AbortSignal,
 	): Promise<void> {
 		await this.ctx.store.markCompleted(prdName);
-		await extractAndSaveFindings(prdName);
+		await extractAndSaveFindings(this.ctx.projectName, this.ctx.repoRoot, prdName);
 
 		// Run code review pipeline
 		const configResult = await loadConfig();
@@ -417,9 +430,15 @@ export class OrchestrationEngine {
 				const result = await this.ctx.runner.run(prompt, config, { signal });
 				return { output: result.output, exitCode: result.exitCode };
 			};
-			await generateVerification(prdName, agentConfig, runAgentFn);
+			await generateVerification(
+				this.ctx.projectName,
+				this.ctx.repoRoot,
+				prdName,
+				agentConfig,
+				runAgentFn,
+			);
 		} catch {
-			await generateSimpleVerification(prdName);
+			await generateSimpleVerification(this.ctx.projectName, this.ctx.repoRoot, prdName);
 		}
 
 		await this.ctx.store.updateLastRun(prdName, {
@@ -471,16 +490,22 @@ export class OrchestrationEngine {
 		}
 
 		// Ensure verification exists
-		if (!hasVerification(prdName)) {
+		if (!hasVerification(this.ctx.projectName, this.ctx.repoRoot, prdName)) {
 			log("info", "Generating verification checklist...");
 			try {
 				const runAgentFn = async (prompt: string, cfg: AgentConfig) => {
 					const result = await this.ctx.runner.run(prompt, cfg, { signal });
 					return { output: result.output, exitCode: result.exitCode };
 				};
-				await generateVerification(prdName, agentConfig, runAgentFn);
+				await generateVerification(
+					this.ctx.projectName,
+					this.ctx.repoRoot,
+					prdName,
+					agentConfig,
+					runAgentFn,
+				);
 			} catch {
-				await generateSimpleVerification(prdName);
+				await generateSimpleVerification(this.ctx.projectName, this.ctx.repoRoot, prdName);
 			}
 		}
 
@@ -571,7 +596,12 @@ export class OrchestrationEngine {
 		}
 
 		// Generate prompt and run
-		const prompt = await generateTestPrompt(prdName, config);
+		const prompt = await generateTestPrompt(
+			this.ctx.projectName,
+			this.ctx.repoRoot,
+			prdName,
+			config,
+		);
 
 		log("info", "Spawning test agent...");
 		const result = await this.ctx.runner.run(prompt, agentConfig, {
@@ -588,7 +618,7 @@ export class OrchestrationEngine {
 		const testResult = detectTestResult(result.output);
 		const issues = extractIssues(result.output);
 
-		await saveTestReport(prdName, report);
+		await saveTestReport(this.ctx.projectName, this.ctx.repoRoot, prdName, report);
 
 		// Teardown
 		log("info", "Running teardown...");
@@ -597,7 +627,7 @@ export class OrchestrationEngine {
 		// Handle result
 		if (testResult === "verified") {
 			log("info", "PRD_VERIFIED - moving to completed");
-			await extractAndSaveFindings(prdName);
+			await extractAndSaveFindings(this.ctx.projectName, this.ctx.repoRoot, prdName);
 
 			const oldStatus = this.ctx.store.findLocation(prdName) ?? "testing";
 			await this.ctx.store.transition(prdName, "completed");
@@ -785,22 +815,12 @@ Begin diagnosis now.
 	}
 }
 
-// Default engine instance
-let defaultEngine: OrchestrationEngine | null = null;
-
 /**
- * Get the default orchestration engine
+ * Create a new orchestration engine with required project context
  */
-export function getEngine(): OrchestrationEngine {
-	if (!defaultEngine) {
-		defaultEngine = new OrchestrationEngine();
-	}
-	return defaultEngine;
-}
-
-/**
- * Create a new orchestration engine with custom context
- */
-export function createEngine(ctx?: Partial<EngineContext>): OrchestrationEngine {
+export function createEngine(
+	ctx: Pick<EngineContext, "projectName" | "repoRoot"> &
+		Partial<Omit<EngineContext, "projectName" | "repoRoot">>,
+): OrchestrationEngine {
 	return new OrchestrationEngine(ctx);
 }

@@ -1,26 +1,36 @@
 /**
  * Ralph Sync Hook
  *
- * Called by `omnidev agents sync` to set up Ralph directory structure.
+ * Called by `omnidev agents sync` to set up Ralph state directory structure.
+ * State is stored at $XDG_STATE_HOME/omnidev/ralph/<project-key>/.
  */
 
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-
-const RALPH_DIR = ".omni/state/ralph";
-const PRDS_DIR = join(RALPH_DIR, "prds");
+import { execSync } from "node:child_process";
+import { loadConfig } from "./lib/core/config.js";
+import { ensureStateDirs } from "./lib/core/paths.js";
 
 /**
  * Sync hook called by omnidev agents sync.
- * Creates directory structure for PRDs.
+ * Creates directory structure for PRDs at XDG state location.
  *
- * Configuration is now stored in omni.toml under [ralph] section.
+ * Configuration is stored in omni.toml under [ralph] section.
  * Scripts are configured via [ralph.scripts] with user-defined paths.
  */
 export async function sync(): Promise<void> {
-	// Create directory structure
-	mkdirSync(RALPH_DIR, { recursive: true });
-	mkdirSync(join(PRDS_DIR, "pending"), { recursive: true });
-	mkdirSync(join(PRDS_DIR, "testing"), { recursive: true });
-	mkdirSync(join(PRDS_DIR, "completed"), { recursive: true });
+	const configResult = await loadConfig();
+	if (!configResult.ok) {
+		// Config not yet set up — nothing to sync
+		return;
+	}
+
+	const config = configResult.data!;
+	let repoRoot: string;
+	try {
+		repoRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+	} catch {
+		// Not in a git repo — nothing to sync
+		return;
+	}
+
+	ensureStateDirs(config.project_name, repoRoot);
 }

@@ -222,8 +222,8 @@ export interface RunnerConfig {
  * Ralph configuration
  */
 export interface RalphConfig {
-	/** Project name — used as session name for runner (e.g., "srbshop") */
-	project_name?: string;
+	/** Project name — used for state directory and session name (e.g., "srbshop") */
+	project_name: string;
 	/** Default agent to use */
 	default_agent: string;
 	/** Default max iterations */

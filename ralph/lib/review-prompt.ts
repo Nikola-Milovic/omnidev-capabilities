@@ -33,6 +33,8 @@ async function loadSubagentDefinition(reviewType: string): Promise<string> {
  * Generate a prompt for a review agent
  */
 export async function generateReviewPrompt(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	reviewType: string,
 	prd: PRD,
@@ -40,11 +42,11 @@ export async function generateReviewPrompt(
 	isSecondReview: boolean,
 ): Promise<string> {
 	const agentDefinition = await loadSubagentDefinition(reviewType);
-	const prdStatus = findPRDLocation(prdName) ?? "in_progress";
+	const prdStatus = findPRDLocation(projectName, repoRoot, prdName) ?? "in_progress";
 
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}

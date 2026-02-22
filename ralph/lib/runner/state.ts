@@ -5,12 +5,11 @@
  * which PRDs are running in which worktrees/panes.
  *
  * This file is NOT committed to git (it's session-specific).
- * It lives in .omni/state/ralph/runner.json in the main worktree.
+ * It lives at $XDG_STATE_HOME/omnidev/ralph/<project>/runner.json.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { readFile, writeFile, rename } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { type Result, ok, err } from "../results.js";
 import type {
 	RunnerState,
@@ -19,22 +18,16 @@ import type {
 	PersistedRunInstance,
 	SessionBackend,
 } from "./types.js";
-
-const RALPH_DIR = ".omni/state/ralph";
-const RUNNER_STATE_FILE = "runner.json";
-
-/**
- * Get the path to runner.json
- */
-function getStatePath(cwd: string): string {
-	return join(cwd, RALPH_DIR, RUNNER_STATE_FILE);
-}
+import { getRunnerStatePath, atomicWrite } from "../core/paths.js";
 
 /**
  * Load runner state from disk
  */
-export async function loadRunnerState(cwd: string): Promise<Result<RunnerState>> {
-	const statePath = getStatePath(cwd);
+export async function loadRunnerState(
+	projectName: string,
+	repoRoot: string,
+): Promise<Result<RunnerState>> {
+	const statePath = getRunnerStatePath(projectName, repoRoot);
 
 	if (!existsSync(statePath)) {
 		return ok({ session: "", runs: {} });
@@ -53,16 +46,13 @@ export async function loadRunnerState(cwd: string): Promise<Result<RunnerState>>
 /**
  * Save runner state to disk (atomic write via rename)
  */
-export async function saveRunnerState(cwd: string, state: RunnerState): Promise<Result<void>> {
-	const statePath = getStatePath(cwd);
-	const tmpPath = `${statePath}.tmp`;
-
+export async function saveRunnerState(
+	projectName: string,
+	repoRoot: string,
+	state: RunnerState,
+): Promise<Result<void>> {
 	try {
-		const dir = dirname(statePath);
-		mkdirSync(dir, { recursive: true });
-
-		await writeFile(tmpPath, JSON.stringify(state, null, 2));
-		await rename(tmpPath, statePath);
+		await atomicWrite(getRunnerStatePath(projectName, repoRoot), JSON.stringify(state, null, 2));
 		return ok(undefined);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -74,11 +64,12 @@ export async function saveRunnerState(cwd: string, state: RunnerState): Promise<
  * Add or update a run instance in state
  */
 export async function upsertRun(
-	cwd: string,
+	projectName: string,
+	repoRoot: string,
 	sessionName: string,
 	instance: RunInstance,
 ): Promise<Result<void>> {
-	const stateResult = await loadRunnerState(cwd);
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
@@ -92,18 +83,19 @@ export async function upsertRun(
 		windowId: instance.windowId,
 	};
 
-	return saveRunnerState(cwd, state);
+	return saveRunnerState(projectName, repoRoot, state);
 }
 
 /**
  * Update the status of a run instance
  */
 export async function updateRunStatus(
-	cwd: string,
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	status: RunStatus,
 ): Promise<Result<void>> {
-	const stateResult = await loadRunnerState(cwd);
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
@@ -111,26 +103,34 @@ export async function updateRunStatus(
 	if (!run) return err("NOT_RUNNING", `No run found for PRD: ${prdName}`);
 
 	run.status = status;
-	return saveRunnerState(cwd, state);
+	return saveRunnerState(projectName, repoRoot, state);
 }
 
 /**
  * Remove a run instance from state
  */
-export async function removeRun(cwd: string, prdName: string): Promise<Result<void>> {
-	const stateResult = await loadRunnerState(cwd);
+export async function removeRun(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<Result<void>> {
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
 	delete state.runs[prdName];
-	return saveRunnerState(cwd, state);
+	return saveRunnerState(projectName, repoRoot, state);
 }
 
 /**
  * Get a single run instance from state
  */
-export async function getRun(cwd: string, prdName: string): Promise<Result<RunInstance | null>> {
-	const stateResult = await loadRunnerState(cwd);
+export async function getRun(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<Result<RunInstance | null>> {
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
@@ -143,8 +143,11 @@ export async function getRun(cwd: string, prdName: string): Promise<Result<RunIn
 /**
  * Get all run instances from state
  */
-export async function getAllRuns(cwd: string): Promise<Result<RunInstance[]>> {
-	const stateResult = await loadRunnerState(cwd);
+export async function getAllRuns(
+	projectName: string,
+	repoRoot: string,
+): Promise<Result<RunInstance[]>> {
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
@@ -161,10 +164,11 @@ export async function getAllRuns(cwd: string): Promise<Result<RunInstance[]>> {
  * Marks instances as "stale" if their pane is dead. Returns reconciled list.
  */
 export async function reconcile(
-	cwd: string,
+	projectName: string,
+	repoRoot: string,
 	session: SessionBackend,
 ): Promise<Result<RunInstance[]>> {
-	const stateResult = await loadRunnerState(cwd);
+	const stateResult = await loadRunnerState(projectName, repoRoot);
 	if (!stateResult.ok) return err(stateResult.error!.code, stateResult.error!.message);
 
 	const state = stateResult.data!;
@@ -189,7 +193,7 @@ export async function reconcile(
 
 	// Persist changes if any instances were marked stale
 	if (dirty) {
-		await saveRunnerState(cwd, state);
+		await saveRunnerState(projectName, repoRoot, state);
 	}
 
 	return ok(instances);

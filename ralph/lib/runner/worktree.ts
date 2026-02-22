@@ -286,20 +286,6 @@ export async function checkMergeConflicts(
 }
 
 /**
- * Check if .omni/state/ralph is tracked by git (not gitignored)
- */
-export async function isStateTracked(cwd: string): Promise<Result<boolean>> {
-	try {
-		await git(["check-ignore", "-q", ".omni/state/ralph"], cwd);
-		// If check-ignore succeeds (exit 0), the path IS ignored
-		return ok(false);
-	} catch {
-		// Exit code 1 means NOT ignored (i.e., tracked) — this is what we want
-		return ok(true);
-	}
-}
-
-/**
  * Get the main worktree path (the one that's not a linked worktree)
  */
 export async function getMainWorktreePath(cwd: string): Promise<Result<string>> {

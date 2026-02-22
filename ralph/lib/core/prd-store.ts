@@ -4,24 +4,17 @@
  * Unified storage for PRD operations.
  * All PRD read/write operations go through this class.
  * Includes Zod validation for all operations.
+ * Paths resolve to $XDG_STATE_HOME/omnidev/ralph/<project-key>/.
  */
 
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PRD, PRDStatus, Story, StoryStatus, LastRun } from "../types.js";
 import { validatePRD } from "../schemas.js";
 import { PRDStateMachine, StoryStateMachine } from "./state-machine.js";
 import { type Result, ok, err, ErrorCodes } from "../results.js";
-
-const RALPH_DIR = ".omni/state/ralph";
-
-const PRD_STATUS_DIRS: Record<PRDStatus, string> = {
-	pending: join(RALPH_DIR, "prds", "pending"),
-	in_progress: join(RALPH_DIR, "prds", "in_progress"),
-	testing: join(RALPH_DIR, "prds", "testing"),
-	completed: join(RALPH_DIR, "prds", "completed"),
-};
+import { getStatusDir, ensureStateDirs, atomicWrite } from "./paths.js";
 
 const ALL_STATUSES: PRDStatus[] = ["pending", "in_progress", "testing", "completed"];
 
@@ -29,26 +22,26 @@ const ALL_STATUSES: PRDStatus[] = ["pending", "in_progress", "testing", "complet
  * PRD Store - single source of truth for all PRD operations
  */
 export class PRDStore {
-	private cwd: string;
+	private projectName: string;
+	private repoRoot: string;
 
-	constructor(cwd?: string) {
-		this.cwd = cwd ?? process.cwd();
+	constructor(projectName: string, repoRoot: string) {
+		this.projectName = projectName;
+		this.repoRoot = repoRoot;
 	}
 
 	/**
 	 * Ensure all status directories exist
 	 */
 	ensureDirectories(): void {
-		for (const dir of Object.values(PRD_STATUS_DIRS)) {
-			mkdirSync(join(this.cwd, dir), { recursive: true });
-		}
+		ensureStateDirs(this.projectName, this.repoRoot);
 	}
 
 	/**
 	 * Get the path to a PRD directory by status
 	 */
 	private getPRDPathByStatus(name: string, status: PRDStatus): string {
-		return join(this.cwd, PRD_STATUS_DIRS[status], name);
+		return join(getStatusDir(this.projectName, this.repoRoot, status), name);
 	}
 
 	/**
@@ -140,7 +133,7 @@ export class PRDStore {
 		}
 
 		try {
-			await writeFile(prdPath, JSON.stringify(prd, null, 2));
+			await atomicWrite(prdPath, JSON.stringify(prd, null, 2));
 			return ok(undefined);
 		} catch (error) {
 			return err(
@@ -191,7 +184,7 @@ export class PRDStore {
 
 		// Move the PRD
 		const sourcePath = this.getPRDPathByStatus(name, currentStatus);
-		const destDir = join(this.cwd, PRD_STATUS_DIRS[toStatus]);
+		const destDir = getStatusDir(this.projectName, this.repoRoot, toStatus);
 		const destPath = join(destDir, name);
 
 		mkdirSync(destDir, { recursive: true });
@@ -219,7 +212,7 @@ export class PRDStore {
 		const statusesToCheck = status ? [status] : ALL_STATUSES;
 
 		for (const s of statusesToCheck) {
-			const dirPath = join(this.cwd, PRD_STATUS_DIRS[s]);
+			const dirPath = getStatusDir(this.projectName, this.repoRoot, s);
 			if (!existsSync(dirPath)) continue;
 
 			const entries = readdirSync(dirPath, { withFileTypes: true });
@@ -482,22 +475,16 @@ export class PRDStore {
 	}
 }
 
-// Default store instance using process.cwd()
-let defaultStore: PRDStore | null = null;
-
 /**
- * Get the default PRD store instance
+ * Get a PRD store for a given project
  */
-export function getDefaultStore(): PRDStore {
-	if (!defaultStore) {
-		defaultStore = new PRDStore();
-	}
-	return defaultStore;
+export function getDefaultStore(projectName: string, repoRoot: string): PRDStore {
+	return new PRDStore(projectName, repoRoot);
 }
 
 /**
- * Create a new PRD store with a custom working directory
+ * Create a new PRD store (alias for constructor)
  */
-export function createStore(cwd: string): PRDStore {
-	return new PRDStore(cwd);
+export function createStore(projectName: string, repoRoot: string): PRDStore {
+	return new PRDStore(projectName, repoRoot);
 }

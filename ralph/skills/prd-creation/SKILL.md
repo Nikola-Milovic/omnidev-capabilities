@@ -28,7 +28,7 @@ When a user requests a PRD:
 Before starting from scratch, check if the user has referenced or if there exist any related spec, plan, or requirements files:
 
 - Search for existing specs, plans, or requirement docs the user mentioned
-- Check `.omni/state/ralph/prds/` for related or prior PRDs on the same topic
+- Run `omnidev ralph list --all` to check for related or prior PRDs on the same topic
 - If found, use them as the foundation and expand from there — recreating existing work wastes time and loses context
 
 ### 2. Research & Explore
@@ -81,9 +81,11 @@ Use the AskUserQuestion tool to present options, gather preferences, and validat
 Create the PRD folder in the `pending` directory and write **only spec.md** at this stage. Do not create prd.json or progress.txt yet — the spec needs to be reviewed and confirmed before investing effort in story breakdown.
 
 ```
-.omni/state/ralph/prds/pending/<prd-name>/
+$XDG_STATE_HOME/omnidev/ralph/<project>/prds/pending/<prd-name>/
   └── spec.md        # Detailed feature specification
 ```
+
+(Defaults to `~/.local/state/omnidev/ralph/<project>/prds/pending/<prd-name>/`)
 
 The spec describes WHAT the feature should do (requirements), NOT HOW to implement it.
 
@@ -309,7 +311,7 @@ The reviewer returns a verdict:
 After the reviewer approves, tell the user:
 
 ```
-PRD created at .omni/state/ralph/prds/pending/<name>/
+PRD created in pending status.
 
 To start: omnidev ralph start <name>
 To check:  omnidev ralph status <name>

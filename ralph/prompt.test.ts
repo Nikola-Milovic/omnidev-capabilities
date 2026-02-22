@@ -7,17 +7,17 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, it } from "node:test";
-import { generatePrompt } from "./lib/index.js";
+import { generatePrompt, getStatusDir, ensureDirectories } from "./lib/index.js";
 import type { PRD, Story } from "./lib/types.js";
 
-const TEST_DIR = join(process.cwd(), ".test-ralph-prompt");
-const RALPH_DIR = join(TEST_DIR, ".omni/state/ralph");
-const PRDS_DIR = join(RALPH_DIR, "prds");
+const PROJECT_NAME = "test";
+const REPO_ROOT = "/test-repo";
+let testDir: string;
+let originalXdg: string | undefined;
 
 // Helper to create a PRD directly
 async function createTestPRD(name: string, prd: Partial<PRD> = {}): Promise<void> {
-	// Create in pending folder to match new status-based structure
-	const prdDir = join(PRDS_DIR, "pending", name);
+	const prdDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"), name);
 	mkdirSync(prdDir, { recursive: true });
 
 	const fullPRD: PRD = {
@@ -37,16 +37,25 @@ async function createTestPRD(name: string, prd: Partial<PRD> = {}): Promise<void
 }
 
 beforeEach(() => {
-	mkdirSync(TEST_DIR, { recursive: true });
-	process.chdir(TEST_DIR);
-	mkdirSync(RALPH_DIR, { recursive: true });
-	mkdirSync(PRDS_DIR, { recursive: true });
+	testDir = join(
+		process.cwd(),
+		".test-ralph-prompt",
+		`test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+	);
+	mkdirSync(testDir, { recursive: true });
+	originalXdg = process.env["XDG_STATE_HOME"];
+	process.env["XDG_STATE_HOME"] = testDir;
+	ensureDirectories(PROJECT_NAME, REPO_ROOT);
 });
 
 afterEach(() => {
-	process.chdir(join(TEST_DIR, ".."));
-	if (existsSync(TEST_DIR)) {
-		rmSync(TEST_DIR, { recursive: true, force: true });
+	if (originalXdg !== undefined) {
+		process.env["XDG_STATE_HOME"] = originalXdg;
+	} else {
+		delete process.env["XDG_STATE_HOME"];
+	}
+	if (existsSync(testDir)) {
+		rmSync(testDir, { recursive: true, force: true });
 	}
 });
 
@@ -69,7 +78,7 @@ it("generates prompt with PRD context", async () => {
 
 	await createTestPRD("test-project", prd);
 
-	const prompt = await generatePrompt(prd, story, "test-project");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "test-project");
 
 	assert.ok(prompt.includes("test-project"));
 	assert.ok(prompt.includes("Test project description"));
@@ -98,7 +107,7 @@ it("includes spec content", async () => {
 
 	await createTestPRD("spec-test", prd);
 
-	const prompt = await generatePrompt(prd, story, "spec-test");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "spec-test");
 
 	assert.ok(prompt.includes("Test Spec"));
 	assert.ok(prompt.includes("Test specification content"));
@@ -125,9 +134,14 @@ it("includes recent progress", async () => {
 
 	// Add progress
 	const { appendProgress } = await import("./lib/index.js");
-	await appendProgress("progress-test", "## Test Progress\n- Did something");
+	await appendProgress(
+		PROJECT_NAME,
+		REPO_ROOT,
+		"progress-test",
+		"## Test Progress\n- Did something",
+	);
 
-	const prompt = await generatePrompt(prd, story, "progress-test");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "progress-test");
 
 	assert.ok(prompt.includes("Test Progress"));
 	assert.ok(prompt.includes("Did something"));
@@ -151,14 +165,14 @@ it("includes codebase patterns", async () => {
 	};
 
 	await createTestPRD("patterns-test", prd);
-	const prdDir = join(PRDS_DIR, "pending", "patterns-test");
+	const prdDir = join(getStatusDir(PROJECT_NAME, REPO_ROOT, "pending"), "patterns-test");
 	const progressPath = join(prdDir, "progress.txt");
 	await writeFile(
 		progressPath,
 		"## Codebase Patterns\n- Use writeFile()\n- Use strict types\n\n---\n\n## Progress Log\n",
 	);
 
-	const prompt = await generatePrompt(prd, story, "patterns-test");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "patterns-test");
 
 	assert.ok(prompt.includes("Use writeFile()"));
 	assert.ok(prompt.includes("Use strict types"));
@@ -183,7 +197,7 @@ it("handles empty patterns gracefully", async () => {
 
 	await createTestPRD("no-patterns", prd);
 
-	const prompt = await generatePrompt(prd, story, "no-patterns");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "no-patterns");
 
 	assert.ok(prompt.includes("None yet"));
 });
@@ -207,7 +221,7 @@ it("formats acceptance criteria as bullet list", async () => {
 
 	await createTestPRD("criteria-test", prd);
 
-	const prompt = await generatePrompt(prd, story, "criteria-test");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "criteria-test");
 
 	assert.ok(prompt.includes("  - First criterion"));
 	assert.ok(prompt.includes("  - Second criterion"));
@@ -243,7 +257,7 @@ it("includes other stories for context", async () => {
 
 	await createTestPRD("multi-story", prd);
 
-	const prompt = await generatePrompt(prd, story, "multi-story");
+	const prompt = await generatePrompt(PROJECT_NAME, REPO_ROOT, prd, story, "multi-story");
 
 	assert.ok(prompt.includes("US-001: First Story [completed]"));
 });

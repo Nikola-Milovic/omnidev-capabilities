@@ -39,6 +39,9 @@ interface RawTomlConfig {
 	};
 }
 
+// Re-export path utilities so consumers can use them via config module
+export { validateProjectName, getStateDir, getPrdsDir } from "./paths.js";
+
 interface RawAgentConfig {
 	command?: string;
 	args?: string[];
@@ -93,7 +96,7 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 	const config: Partial<RalphConfig> = {};
 
 	// Top-level settings
-	if (ralph.project_name) {
+	if (ralph.project_name !== undefined) {
 		config.project_name = ralph.project_name;
 	}
 	if (ralph.default_agent) {

@@ -5,6 +5,7 @@
  */
 
 import { findPRDLocation, getProgress, getPRD, getSpec } from "./state.js";
+import { getStatusDir } from "./core/paths.js";
 import type { PRD, Story } from "./types.js";
 
 /**
@@ -34,14 +35,21 @@ function extractPatterns(progressContent: string): string[] {
 /**
  * Generates a prompt for the agent based on PRD and current story.
  */
-export async function generatePrompt(prd: PRD, story: Story, prdName: string): Promise<string> {
-	const prdStatus = findPRDLocation(prdName) ?? "pending";
+export async function generatePrompt(
+	projectName: string,
+	repoRoot: string,
+	prd: PRD,
+	story: Story,
+	prdName: string,
+): Promise<string> {
+	const prdStatus = findPRDLocation(projectName, repoRoot, prdName) ?? "pending";
+	const prdDir = `${getStatusDir(projectName, repoRoot, prdStatus)}/${prdName}`;
 
 	// Load progress and spec
-	const progressContent = await getProgress(prdName);
+	const progressContent = await getProgress(projectName, repoRoot, prdName);
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}
@@ -112,9 +120,9 @@ ${criteriaLines}${questionsAnswersText}
 Read these files before writing any code:
 
 \`\`\`bash
-cat .omni/state/ralph/prds/${prdStatus}/${prdName}/prd.json
-cat .omni/state/ralph/prds/${prdStatus}/${prdName}/spec.md
-cat .omni/state/ralph/prds/${prdStatus}/${prdName}/progress.txt
+cat ${prdDir}/prd.json
+cat ${prdDir}/spec.md
+cat ${prdDir}/progress.txt
 \`\`\`
 
 - **spec.md** has the feature requirements
@@ -154,7 +162,7 @@ git commit -m "feat: [${story.id}] - ${story.title}"
 Update the story status in the PRD file. The PRD file tracks iteration state — if you skip this, the next iteration will re-run this story.
 
 \`\`\`bash
-PRD_FILE=".omni/state/ralph/prds/${prdStatus}/${prdName}/prd.json"
+PRD_FILE="${prdDir}/prd.json"
 # Find the story with id "${story.id}" and change its "status" to "completed"
 \`\`\`
 
@@ -297,12 +305,16 @@ The bad entry has no detail for future iterations to learn from.
 /**
  * Generates a prompt for extracting findings from a completed PRD.
  */
-export async function generateFindingsExtractionPrompt(prdName: string): Promise<string> {
-	const prd = await getPRD(prdName);
-	const progressContent = await getProgress(prdName);
+export async function generateFindingsExtractionPrompt(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+): Promise<string> {
+	const prd = await getPRD(projectName, repoRoot, prdName);
+	const progressContent = await getProgress(projectName, repoRoot, prdName);
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}

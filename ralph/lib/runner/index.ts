@@ -40,7 +40,6 @@ export {
 	hasUncommittedChanges,
 	mergeWorktree,
 	checkMergeConflicts,
-	isStateTracked,
 	getMainWorktreePath,
 	isMainWorktree,
 } from "./worktree.js";

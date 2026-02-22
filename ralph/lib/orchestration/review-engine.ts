@@ -10,6 +10,8 @@ import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { getStatusDir } from "../core/paths.js";
+import type { PRDStatus } from "../types.js";
 import type { EngineContext, EngineEvent } from "./engine.js";
 import type {
 	PRD,
@@ -59,8 +61,17 @@ function getGitDiff(): string {
 /**
  * Get the review results directory for a PRD
  */
-function getReviewResultsDir(prdName: string, prdStatus: string): string {
-	return join(".omni", "state", "ralph", "prds", prdStatus, prdName, "review-results");
+function getReviewResultsDir(
+	projectName: string,
+	repoRoot: string,
+	prdName: string,
+	prdStatus: string,
+): string {
+	return join(
+		getStatusDir(projectName, repoRoot, prdStatus as PRDStatus),
+		prdName,
+		"review-results",
+	);
 }
 
 /**
@@ -121,7 +132,12 @@ export class ReviewEngine {
 		};
 
 		const prdStatus = this.ctx.store.findLocation(prdName) ?? "in_progress";
-		const resultsDir = getReviewResultsDir(prdName, prdStatus);
+		const resultsDir = getReviewResultsDir(
+			this.ctx.projectName,
+			this.ctx.repoRoot,
+			prdName,
+			prdStatus,
+		);
 		mkdirSync(resultsDir, { recursive: true });
 
 		const gitDiff = getGitDiff();
@@ -249,6 +265,8 @@ export class ReviewEngine {
 			const reviewPromises = reviewTypes.map(async (reviewType) => {
 				try {
 					const prompt = await generateReviewPrompt(
+						this.ctx.projectName,
+						this.ctx.repoRoot,
 						prdName,
 						reviewType,
 						prd,

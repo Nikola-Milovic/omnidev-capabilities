@@ -91,6 +91,19 @@ export {
 	createStore,
 } from "./core/prd-store.js";
 
+// Core - Paths
+export {
+	validateProjectName,
+	getProjectKey,
+	getXdgStateHome,
+	getStateDir,
+	getPrdsDir,
+	getStatusDir,
+	getRunnerStatePath,
+	ensureStateDirs,
+	atomicWrite,
+} from "./core/paths.js";
+
 // Core - Config (Result-based API)
 export {
 	loadConfig,
@@ -135,7 +148,6 @@ export {
 	type DevelopmentResult,
 	type TestRunResult,
 	OrchestrationEngine,
-	getEngine,
 	createEngine,
 } from "./orchestration/engine.js";
 
@@ -167,9 +179,7 @@ export {
 	listPRDsByStatus,
 	markPRDCompleted,
 	markPRDStarted,
-	migrateToStatusFolders,
 	movePRD,
-	needsMigration,
 	savePRD,
 	unblockStory,
 	updateLastRun,
@@ -303,7 +313,6 @@ export {
 	hasUncommittedChanges,
 	mergeWorktree,
 	checkMergeConflicts,
-	isStateTracked,
 	getMainWorktreePath,
 	isMainWorktree,
 	// Runner state

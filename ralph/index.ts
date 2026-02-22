@@ -46,11 +46,14 @@ Look for the \`[docs]\` section with the \`path\` setting. If not configured, as
 
 ### 2. Find the PRD
 
-Locate the PRD in the completed directory:
+List PRDs and find the target in the completed status:
 
 \`\`\`bash
-ls .omni/state/ralph/prds/completed/
+omnidev ralph list --all
+omnidev ralph status <prd-name>
 \`\`\`
+
+PRD state is stored at \`$XDG_STATE_HOME/omnidev/ralph/<project>/prds/<status>/<prd-name>/\` (defaults to \`~/.local/state/...\`). Use the \`omnidev ralph status\` output to locate files.
 
 If the PRD isn't found in completed, check other statuses (testing, in_progress) and inform the user.
 
@@ -59,9 +62,8 @@ If the PRD isn't found in completed, check other statuses (testing, in_progress)
 Read the PRD's spec and progress to understand what was changed:
 
 \`\`\`bash
-cat .omni/state/ralph/prds/completed/<prd-name>/spec.md
-cat .omni/state/ralph/prds/completed/<prd-name>/progress.txt
-cat .omni/state/ralph/prds/completed/<prd-name>/prd.json
+omnidev ralph spec <prd-name>
+omnidev ralph progress <prd-name>
 \`\`\`
 
 ### 4. Analyze Documentation
@@ -143,7 +145,7 @@ export default {
 		},
 	],
 
-	gitignore: ["ralph/", "*.ralph.log"],
+	gitignore: ["*.ralph.log"],
 
 	sync,
 } satisfies CapabilityExport;

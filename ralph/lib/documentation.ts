@@ -119,15 +119,17 @@ export function findDocFiles(docsPath: string): DocFile[] {
  * 3. Update docs with concise, clear content focused on core functionality
  */
 export async function generateDocumentationUpdatePrompt(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	docsPath: string,
 ): Promise<{ prompt: string; context: DocumentationContext } | null> {
-	const prd = await getPRD(prdName);
-	const progressContent = await getProgress(prdName);
+	const prd = await getPRD(projectName, repoRoot, prdName);
+	const progressContent = await getProgress(projectName, repoRoot, prdName);
 
 	let specContent = "";
 	try {
-		specContent = await getSpec(prdName);
+		specContent = await getSpec(projectName, repoRoot, prdName);
 	} catch {
 		specContent = "(spec.md not found)";
 	}
@@ -287,6 +289,8 @@ export async function applyDocumentationUpdates(
  * This is the main entry point called after a PRD transitions to completed.
  */
 export async function updateDocumentation(
+	projectName: string,
+	repoRoot: string,
 	prdName: string,
 	docsPath: string,
 	agentConfig: AgentConfig,
@@ -297,7 +301,12 @@ export async function updateDocumentation(
 ): Promise<{ updated: string[]; skipped: string[]; errors: string[] }> {
 	console.log("\nAnalyzing documentation for updates...");
 
-	const promptResult = await generateDocumentationUpdatePrompt(prdName, docsPath);
+	const promptResult = await generateDocumentationUpdatePrompt(
+		projectName,
+		repoRoot,
+		prdName,
+		docsPath,
+	);
 
 	if (!promptResult) {
 		console.log("No documentation found to update.");

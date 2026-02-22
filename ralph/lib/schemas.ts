@@ -130,7 +130,14 @@ export const RunnerConfigSchema = z.object({
  * Ralph configuration schema
  */
 export const RalphConfigSchema = z.object({
-	project_name: z.string().optional(),
+	project_name: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(
+			/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+			"Must be a lowercase slug (a-z, 0-9, hyphens; no leading/trailing hyphens)",
+		),
 	default_agent: z.string().min(1),
 	default_iterations: z.number().int().min(1),
 	agents: z.record(z.string(), AgentConfigSchema),
