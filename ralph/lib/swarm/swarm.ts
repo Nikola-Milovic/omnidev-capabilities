@@ -29,6 +29,7 @@ import {
 	interpolateWorktreeCmd,
 	getCurrentBranch,
 } from "./worktree.js";
+import { buildAutoCloseCommand } from "./commands.js";
 import { AgentExecutor } from "../orchestration/agent-runner.js";
 import {
 	loadSwarmState,
@@ -156,7 +157,10 @@ export class SwarmManager {
 		const agentFlag = options?.agent ? ` --agent ${shellEscape(options.agent)}` : "";
 		const timeout = this.config.pane_close_timeout;
 		const guard = buildWorktreeGuard(worktreePath, actualBranch);
-		const command = `${panePrefix} && cd ${shellEscape(worktreePath)} && (${guard}) && omnidev ralph start ${shellEscape(prdName)}${agentFlag}; echo "[finished]"; read -t ${timeout} || true`;
+		const command = buildAutoCloseCommand(
+			`${panePrefix} && cd ${shellEscape(worktreePath)} && (${guard}) && omnidev ralph start ${shellEscape(prdName)}${agentFlag}`,
+			timeout,
+		);
 
 		// Create pane
 		const paneResult = await this.session.createPane(this.sessionName, {
@@ -245,7 +249,10 @@ export class SwarmManager {
 		const agentFlag = options?.agent ? ` --agent ${shellEscape(options.agent)}` : "";
 		const timeout = this.config.pane_close_timeout;
 		const guard = buildWorktreeGuard(run.worktree, run.branch);
-		const command = `cd ${shellEscape(run.worktree)} && (${guard}) && omnidev ralph test ${shellEscape(prdName)}${agentFlag}; echo "[finished]"; read -t ${timeout} || true`;
+		const command = buildAutoCloseCommand(
+			`cd ${shellEscape(run.worktree)} && (${guard}) && omnidev ralph test ${shellEscape(prdName)}${agentFlag}`,
+			timeout,
+		);
 
 		// Create pane for testing
 		const paneResult = await this.session.createPane(this.sessionName, {
