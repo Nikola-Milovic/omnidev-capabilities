@@ -332,7 +332,7 @@ That also sets `testsCaughtIssue: true` so the next completion goes directly int
 
 ## Configuration
 
-Configuration lives in `omni.toml` under the `[ralph]` section:
+Configuration lives in `omni.toml` under the `[ralph]` section. If `omni.local.toml` exists in the same directory, Ralph loads it after `omni.toml` and uses it as an override layer:
 
 ```toml
 [ralph]

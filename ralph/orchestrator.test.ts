@@ -37,6 +37,26 @@ command = "npx"
 args = ["-y", "@anthropic-ai/claude-code", "--model", "sonnet", "-p"]
 `;
 
+const LOCAL_OVERRIDE_CONFIG = `[ralph]
+default_agent = "claude"
+
+[ralph.agents.test]
+args = ["local output"]
+
+[ralph.docs]
+path = "guides"
+`;
+
+const LOCAL_ONLY_CONFIG = `[ralph]
+project_name = "local-test"
+default_agent = "local"
+default_iterations = 7
+
+[ralph.agents.local]
+command = "printf"
+args = ["local"]
+`;
+
 // Helper to create a PRD directly
 async function createTestPRD(
 	name: string,
@@ -135,6 +155,39 @@ it("parses multiple agents", async () => {
 	assert.ok(config.agents["test"] !== undefined);
 	assert.ok(config.agents["claude"] !== undefined);
 	assert.strictEqual(config.agents["claude"]?.command, "npx");
+});
+
+it("merges omni.local.toml over omni.toml", async () => {
+	writeFileSync(join(testDir, "omni.local.toml"), LOCAL_OVERRIDE_CONFIG);
+
+	const result = await loadConfig();
+	assert.ok(result.ok);
+	const config = result.data!;
+
+	assert.strictEqual(config.default_agent, "claude");
+	assert.deepStrictEqual(config.agents["test"], {
+		command: "echo",
+		args: ["local output"],
+	});
+	assert.strictEqual(config.docs?.path, "guides");
+	assert.ok(config.agents["claude"] !== undefined);
+});
+
+it("accepts Ralph config provided only by omni.local.toml", async () => {
+	writeFileSync(join(testDir, "omni.toml"), '[workspace]\nname = "test"\n');
+	writeFileSync(join(testDir, "omni.local.toml"), LOCAL_ONLY_CONFIG);
+
+	const result = await loadConfig();
+	assert.ok(result.ok);
+	const config = result.data!;
+
+	assert.strictEqual(config.project_name, "local-test");
+	assert.strictEqual(config.default_agent, "local");
+	assert.strictEqual(config.default_iterations, 7);
+	assert.deepStrictEqual(config.agents["local"], {
+		command: "printf",
+		args: ["local"],
+	});
 });
 
 it("spawns agent with prompt via AgentExecutor", async () => {

@@ -2,11 +2,13 @@
  * Ralph Configuration Loader
  *
  * Loads Ralph configuration from omni.toml using smol-toml.
+ * If omni.local.toml exists alongside omni.toml, it overrides the base config.
  * Replaces the manual TOML parser with proper library support.
  */
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { parse } from "smol-toml";
 import { validateRalphConfig } from "../schemas.js";
 import type {
@@ -21,6 +23,7 @@ import type {
 import { type Result, ok, err, ErrorCodes } from "../results.js";
 
 const CONFIG_PATH = "omni.toml";
+const LOCAL_CONFIG_PATH = "omni.local.toml";
 
 /**
  * Raw TOML structure from omni.toml
@@ -39,6 +42,8 @@ interface RawTomlConfig {
 		swarm?: RawSwarmConfig;
 	};
 }
+
+type TomlObject = Record<string, unknown>;
 
 // Re-export path utilities so consumers can use them via config module
 export { validateProjectName, getStateDir, getPrdsDir } from "./paths.js";
@@ -246,8 +251,49 @@ function transformConfig(raw: RawTomlConfig): Partial<RalphConfig> {
 	return config;
 }
 
+function isTomlObject(value: unknown): value is TomlObject {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeTomlObjects(base: TomlObject, override: TomlObject): TomlObject {
+	const merged: TomlObject = { ...base };
+
+	for (const [key, overrideValue] of Object.entries(override)) {
+		const baseValue = merged[key];
+		if (isTomlObject(baseValue) && isTomlObject(overrideValue)) {
+			merged[key] = mergeTomlObjects(baseValue, overrideValue);
+			continue;
+		}
+
+		merged[key] = overrideValue;
+	}
+
+	return merged;
+}
+
+function getLocalConfigPath(configPath: string): string | null {
+	if (basename(configPath) !== CONFIG_PATH) {
+		return null;
+	}
+
+	return join(dirname(configPath), LOCAL_CONFIG_PATH);
+}
+
+async function parseTomlFile(path: string): Promise<RawTomlConfig> {
+	try {
+		const content = await readFile(path, "utf-8");
+		return parse(content) as RawTomlConfig;
+	} catch (error) {
+		if (error instanceof Error && error.name === "TomlError") {
+			throw new Error(`TOML parse error in ${path}: ${error.message}`);
+		}
+
+		throw error;
+	}
+}
+
 /**
- * Load Ralph configuration from omni.toml
+ * Load Ralph configuration from omni.toml, merged with omni.local.toml when present.
  */
 export async function loadConfig(configPath?: string): Promise<Result<RalphConfig>> {
 	const path = configPath ?? CONFIG_PATH;
@@ -260,9 +306,16 @@ export async function loadConfig(configPath?: string): Promise<Result<RalphConfi
 	}
 
 	try {
-		const content = await readFile(path, "utf-8");
-		const raw = parse(content) as RawTomlConfig;
-		const config = transformConfig(raw);
+		const raw = await parseTomlFile(path);
+		const localPath = getLocalConfigPath(path);
+		const mergedRaw =
+			localPath && existsSync(localPath)
+				? (mergeTomlObjects(
+						raw as TomlObject,
+						(await parseTomlFile(localPath)) as TomlObject,
+					) as RawTomlConfig)
+				: raw;
+		const config = transformConfig(mergedRaw);
 
 		// Validate with Zod
 		const validation = validateRalphConfig(config);
@@ -275,8 +328,8 @@ export async function loadConfig(configPath?: string): Promise<Result<RalphConfi
 
 		return ok(validation.data as RalphConfig);
 	} catch (error) {
-		if (error instanceof Error && error.name === "TomlError") {
-			return err(ErrorCodes.CONFIG_INVALID, `TOML parse error: ${error.message}`);
+		if (error instanceof Error && error.message.startsWith("TOML parse error in ")) {
+			return err(ErrorCodes.CONFIG_INVALID, error.message);
 		}
 		return err(
 			ErrorCodes.UNKNOWN,
